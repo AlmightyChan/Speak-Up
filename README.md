@@ -20,12 +20,12 @@ modded — **with no patches and no spell database to maintain.** Truly plug-and
 
 | Say… | Result |
 |------|--------|
-| `firebolt` | cast it |
-| `left firebolt` / `right firebolt` / `dual firebolt` | cast from that hand / dual-cast |
-| `equip firebolt` | equip instead of cast |
-| `fus` / `fus ro` / `fus ro dah` (or plain English) | shout by word level |
-| `<power name>` | use a power |
-| `open map`, `wait`, `quicksave`, `clear hands`, `toggle listening`, … | utilities |
+| `Firebolt` | Casts Firebolt. |
+| `Dual Cast Firebolt` | Dual-casts it, given the proper perks. |
+| `Equip Firebolt Left` / `Right` / `Dual` | Equips the spell to the specified hand. With no hand it defaults to the left — configurable in the MCM. |
+| `Fus` / `Fus Ro` / `Fus Ro Dah` (or `Force`, `Balance`, `Push`) | Casts the shout at that word level. Speak the Dovahzul if you know it; if not, read the words listed in the menu in plain English. Segmented casting — it only casts what you say. |
+| `Open` / `Show` / `Close` / `Hide` + a menu name | Opens or closes that menu. |
+| `Wait 6 hours` | Waits 6 hours, instantly. |
 
 Casting plays as if you cast it yourself — magicka, perks, enchants, and silence all apply;
 dual-cast is gated by your own perks on any magic overhaul.
