@@ -43,11 +43,6 @@ set(PLUGIN_NAME "SpeakUp")
 set(PLUGIN_AUTHOR "Ethan Muna")
 set(PLUGIN_VERSION "${PROJECT_VERSION}")
 
-# Evaluation expiry (client demo builds). YYYYMMDD; the plugin disables voice
-# recognition once the system date passes this day. Set to 0 for the unlocked
-# build delivered on final payment:  cmake ... -DSPEAKUP_EVAL_EXPIRY=0
-set(SPEAKUP_EVAL_EXPIRY "0" CACHE STRING "Eval expiry YYYYMMDD; 0 = no expiry (default). Client demo: -DSPEAKUP_EVAL_EXPIRY=20260620")
-
 # ----------------------------------------------------------------------------
 # Sources — grows incrementally per the phased plan. Phase 0: load + log only.
 # Only list files that exist.
@@ -84,7 +79,6 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     PLUGIN_NAME="${PLUGIN_NAME}"
     PLUGIN_AUTHOR="${PLUGIN_AUTHOR}"
     PLUGIN_VERSION="${PLUGIN_VERSION}"
-    SPEAKUP_EXPIRY=${SPEAKUP_EVAL_EXPIRY}
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

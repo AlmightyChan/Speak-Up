@@ -16,35 +16,7 @@
 #include "TestHarness.h"
 #include "VoiceController.h"
 
-#include <chrono>
-
 namespace logger = SKSE::log;
-
-// ----------------------------------------------------------------------------
-// Evaluation expiry (client demo builds). SPEAKUP_EXPIRY is a YYYYMMDD baked in
-// at compile time (0 = no expiry, the unlocked build shipped on final payment).
-// Once the system date passes that day the recognizer is never started, so the
-// mod loads cleanly and saves stay safe — it simply stops listening, with a
-// notification telling the player why.
-// ----------------------------------------------------------------------------
-#if SPEAKUP_EXPIRY
-static bool EvalExpired()
-{
-    using namespace std::chrono;
-    const year_month_day today{ floor<days>(system_clock::now()) };
-    const int ymd = static_cast<int>(today.year()) * 10000 +
-                    static_cast<int>(static_cast<unsigned>(today.month())) * 100 +
-                    static_cast<int>(static_cast<unsigned>(today.day()));
-    return ymd > (SPEAKUP_EXPIRY);
-}
-static void NotifyExpired()
-{
-    SKSE::GetTaskInterface()->AddTask([]() {
-        RE::DebugNotification(
-            "Speak Up: this evaluation build has expired. Contact the author for the full version.");
-    });
-}
-#endif
 
 // ----------------------------------------------------------------------------
 // Observability first: a dedicated, flush-on-every-line log so any crash leaves
@@ -84,12 +56,6 @@ static void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
 {
     switch (a_msg->type) {
     case SKSE::MessagingInterface::kPostLoad:
-#if SPEAKUP_EXPIRY
-        if (EvalExpired()) {
-            logger::warn("evaluation build expired (expiry {}) — recognizer NOT started", SPEAKUP_EXPIRY);
-            break;
-        }
-#endif
         logger::info("kPostLoad — starting in-process recognizer");
         VSC::VoiceController::Get().Start();
         break;
@@ -102,12 +68,6 @@ static void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
     case SKSE::MessagingInterface::kNewGame:
-#if SPEAKUP_EXPIRY
-        if (EvalExpired()) {
-            NotifyExpired();
-            break;
-        }
-#endif
         logger::info("save loaded — refreshing grammar");
         VSC::VoiceController::Get().MarkGameReady();
         break;

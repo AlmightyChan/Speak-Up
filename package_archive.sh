@@ -6,7 +6,7 @@
 # backslashes and crashes MO2).
 set -euo pipefail
 VERSION="1.0.0"
-PROJ="/c/Modding/VoiceSpellcasting"
+PROJ="/c/BASECAMP/projects/Thane/mods/SpeakUp"
 PKG="$PROJ/package"
 OUT="$PROJ/dist/SpeakUp-$VERSION.7z"
 DL="/c/Modding/Mods/Skyrim/SpeakUp-$VERSION.7z"   # MO2 downloads (for install testing)
