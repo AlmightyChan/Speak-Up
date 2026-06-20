@@ -1,0 +1,22 @@
+# Configured by CMake (configure_file @ONLY): the destination (which may contain
+# spaces) is baked in here, so no spaced path ever rides on a command line.
+# Invoked as:  cmake -DSRC=<built dll> -P deploy_configured.cmake
+# NEVER fails the build — a locked destination (game running) warns and skips.
+set(DST "@VSC_DEPLOY_DIR@/SpeakUp.dll")
+
+if(NOT EXISTS "${SRC}")
+    message(WARNING "VSC deploy: source missing: ${SRC}")
+    return()
+endif()
+
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E copy "${SRC}" "${DST}"
+    RESULT_VARIABLE _result
+    ERROR_VARIABLE  _err)
+
+if(_result EQUAL 0)
+    message(STATUS "VSC deploy: copied -> ${DST}")
+else()
+    message(WARNING "VSC deploy: could NOT copy to '${DST}' (game running / file locked?). "
+                    "Build is fine; deploy skipped — close the game and rebuild. ${_err}")
+endif()

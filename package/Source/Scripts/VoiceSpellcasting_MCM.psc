@@ -1,0 +1,1 @@
+Scriptname VoiceSpellcasting_MCM extends MCM_ConfigBase

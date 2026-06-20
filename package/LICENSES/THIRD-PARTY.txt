@@ -1,0 +1,26 @@
+Speak Up — third-party components and licenses
+================================================
+
+Speak Up itself is licensed under the GNU General Public License v3.0 (see the
+top-level LICENSE file). As required by GPL-3.0, the complete corresponding
+source is made available to every recipient of this build. Public source repo:
+
+    https://github.com/AlmightyChan/Speak-Up
+
+Redistributed third-party components:
+
+1. Vosk speech recognition library + model
+   Files: SKSE/Plugins/SpeakUp/libvosk.dll
+          SKSE/Plugins/SpeakUp/models/vosk-model-small-en-us-0.15/
+   License: Apache License 2.0 (see LICENSES/Apache-2.0.txt)
+   Copyright (c) Alpha Cephei Inc.  https://alphacephei.com/vosk/  (unmodified)
+
+2. MinGW-w64 / GCC runtime libraries
+   Files: SKSE/Plugins/SpeakUp/libgcc_s_seh-1.dll, libstdc++-6.dll, libwinpthread-1.dll
+   GCC Runtime Library Exception (GPL-3.0 WITH the GCC Runtime Library Exception 3.1),
+   which permits redistribution alongside any program. Unmodified upstream binaries.
+   https://www.gnu.org/licenses/gcc-exception-3.1.html
+
+3. nlohmann/json (compiled into the plugin) — MIT. Copyright (c) 2013-2024 Niels Lohmann.
+
+Architecture inspiration: Dragonborn Speaks Naturally (MIT). Built with SKSE64 + CommonLibSSE-NG.

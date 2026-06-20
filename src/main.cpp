@@ -1,0 +1,155 @@
+// ============================================================================
+// Speak Up — SKSE plugin entry + logging.
+//
+// Reads the player's live spellbook and recognizes spoken commands against a
+// live grammar to cast/equip spells, powers, and shouts, plus hands-free
+// utilities. Recognition runs in-process and fully offline via Vosk (loaded
+// from libvosk.dll at runtime) — there is NO companion process and NO IPC.
+// Built on CommonLibSSE-NG; see docs/ for the architecture notes.
+//
+// License: GPL-3.0. Speak Up is a spiritual successor to Dragonborn Unlimited
+// and Dragonborn Speaks Naturally — no code from either is used; both were
+// inspirations only.
+// ============================================================================
+
+#include "PCH.h"
+#include "TestHarness.h"
+#include "VoiceController.h"
+
+#include <chrono>
+
+namespace logger = SKSE::log;
+
+// ----------------------------------------------------------------------------
+// Evaluation expiry (client demo builds). SPEAKUP_EXPIRY is a YYYYMMDD baked in
+// at compile time (0 = no expiry, the unlocked build shipped on final payment).
+// Once the system date passes that day the recognizer is never started, so the
+// mod loads cleanly and saves stay safe — it simply stops listening, with a
+// notification telling the player why.
+// ----------------------------------------------------------------------------
+#if SPEAKUP_EXPIRY
+static bool EvalExpired()
+{
+    using namespace std::chrono;
+    const year_month_day today{ floor<days>(system_clock::now()) };
+    const int ymd = static_cast<int>(today.year()) * 10000 +
+                    static_cast<int>(static_cast<unsigned>(today.month())) * 100 +
+                    static_cast<int>(static_cast<unsigned>(today.day()));
+    return ymd > (SPEAKUP_EXPIRY);
+}
+static void NotifyExpired()
+{
+    SKSE::GetTaskInterface()->AddTask([]() {
+        RE::DebugNotification(
+            "Speak Up: this evaluation build has expired. Contact the author for the full version.");
+    });
+}
+#endif
+
+// ----------------------------------------------------------------------------
+// Observability first: a dedicated, flush-on-every-line log so any crash leaves
+// the exact last action on disk. Lives at the conventional SKSE log directory:
+//   Documents/My Games/Skyrim Special Edition/SKSE/VoiceSpellcasting.log
+// ----------------------------------------------------------------------------
+static void SetupLog()
+{
+    auto logsFolder = SKSE::log::log_directory();
+    if (!logsFolder) {
+        SKSE::stl::report_and_fail("VSC: SKSE log_directory not provided — cannot create log."sv);
+    }
+
+    auto logFilePath = *logsFolder / std::format("{}.log", PLUGIN_NAME);
+    // Rotating sink (NOT truncate-on-open) so previous sessions survive a relaunch —
+    // dev testing kept losing the prior run's recognition log. Keeps ~3 x 5 MB files
+    // (SpeakUp.log + SpeakUp.1.log + SpeakUp.2.log); a startup banner marks sessions.
+    auto sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+        logFilePath.string(), 5u * 1024u * 1024u, 3u);
+    auto log = std::make_shared<spdlog::logger>("VSC", std::move(sink));
+
+    log->set_level(spdlog::level::info);
+    // Flush on every line: a CTD must not lose the last action that caused it.
+    log->flush_on(spdlog::level::info);
+
+    spdlog::set_default_logger(std::move(log));
+    spdlog::set_pattern("[%H:%M:%S.%e] [%l] %v");
+}
+
+// ----------------------------------------------------------------------------
+// SKSE lifecycle messages.
+//   kPostLoad   — start the in-process Vosk recognizer.
+//   kDataLoaded — forms exist; enumerate the live spell roster, install the
+//                 debug hotkey, register the SpellsLearned sink.
+// ----------------------------------------------------------------------------
+static void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
+{
+    switch (a_msg->type) {
+    case SKSE::MessagingInterface::kPostLoad:
+#if SPEAKUP_EXPIRY
+        if (EvalExpired()) {
+            logger::warn("evaluation build expired (expiry {}) — recognizer NOT started", SPEAKUP_EXPIRY);
+            break;
+        }
+#endif
+        logger::info("kPostLoad — starting in-process recognizer");
+        VSC::VoiceController::Get().Start();
+        break;
+    case SKSE::MessagingInterface::kDataLoaded:
+        logger::info("kDataLoaded — forms available");
+        VSC::VoiceController::Get().RegisterEvents();
+#if VSC_ENABLE_TEST_HARNESS
+        VSC::InstallTestHarness();
+#endif
+        break;
+    case SKSE::MessagingInterface::kPostLoadGame:
+    case SKSE::MessagingInterface::kNewGame:
+#if SPEAKUP_EXPIRY
+        if (EvalExpired()) {
+            NotifyExpired();
+            break;
+        }
+#endif
+        logger::info("save loaded — refreshing grammar");
+        VSC::VoiceController::Get().MarkGameReady();
+        break;
+    default:
+        break;
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Plugin declaration (CommonLibSSE-NG). UsesAddressLibrary(true) +
+// UsesNoStructs(true) declare version-independence so SKSE loads the one binary
+// on ALL runtimes (SE and AE). Without UsesNoStructs, SKSE gates the plugin to
+// pre-1.6.629 only and DISABLES it on AE (e.g. LoreRim) — the exact trap DBU's
+// era of plugins fell into.
+// ----------------------------------------------------------------------------
+extern "C" __declspec(dllexport) constinit SKSE::PluginVersionData SKSEPlugin_Version = [] {
+    SKSE::PluginVersionData v{};
+    v.PluginVersion({ 1, 0, 0 });
+    v.PluginName(PLUGIN_NAME);
+    v.AuthorName(PLUGIN_AUTHOR);
+    v.UsesAddressLibrary(true);
+    v.UsesSigScanning(false);
+    v.UsesNoStructs(true);
+    return v;
+}();
+
+extern "C" __declspec(dllexport) bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_skse)
+{
+    SKSE::Init(a_skse);
+    SetupLog();
+
+    logger::info("============================================================");
+    logger::info("{} v{} — by {}", PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_AUTHOR);
+    logger::info("live, offline voice spellcasting — plug-and-play");
+    logger::info("============================================================");
+
+    auto* messaging = SKSE::GetMessagingInterface();
+    if (!messaging || !messaging->RegisterListener(MessageHandler)) {
+        logger::error("failed to register message listener — aborting load");
+        return false;
+    }
+
+    logger::info("loaded; awaiting kDataLoaded");
+    return true;
+}

@@ -1,0 +1,72 @@
+#pragma once
+
+// ============================================================================
+// VoiceController — the glue. Builds the live roster, derives the command grammar
+// (aliases x verbs via CommandGrammar), pushes the phrase list to the IN-PROCESS
+// recognizer, and on a recognized phrase maps it back to (roster entry, action,
+// hand, dual) and executes it. Owns the roster + phrase map (written on the main
+// thread when the roster changes; read on the recognizer/mic thread on a result).
+// ============================================================================
+
+#include "PCH.h"
+#include "Types.h"
+#include "SpellRoster.h"
+#include "CommandGrammar.h"
+#include <atomic>
+#include <mutex>
+#include <thread>
+
+namespace VSC
+{
+    class VoiceController
+    {
+    public:
+        static VoiceController& Get();
+
+        void Start();           // kPostLoad: start the in-process recognizer
+        void MarkGameReady();   // kPostLoadGame/kNewGame: enable + refresh (main thread)
+        // Rebuild + push the grammar (main thread). a_force=true (events: spells learned,
+        // transforms, save load) always rebuilds; a_force=false (the poll) only rebuilds
+        // when a shout's word-unlock state changed — spells/transforms are event-driven.
+        void RefreshGrammar(bool a_force = false);
+        void RegisterEvents();  // SpellsLearned + transform sinks (main thread)
+
+        // Called by the recognizer on the mic thread with a recognized phrase.
+        void OnPhraseRecognized(const std::string& phrase);
+
+        // Dump the LIVE grammar (phrase -> command) to the log (dev key).
+        void DumpGrammar();
+
+        void ToggleListening();        // persistent listen toggle (hotkey or voice)
+        void OnPushToTalkReleased();   // flush tail utterance when PTT key is released
+
+    private:
+        VoiceController() = default;
+
+        void HandleResult(const std::string& rawPhrase);
+        void LoadConfig();
+        void StartTicker();   // periodic refresh to catch transforms / word unlocks
+
+        std::mutex                                     _mapMutex;
+        std::vector<RosterEntry>                       _roster;
+        std::unordered_map<std::string, CommandTarget> _phraseMap;
+        std::vector<std::string>                       _lastPhrasesSorted;  // skip-if-unchanged
+        std::uint64_t                                  _rosterSig = 0;      // cheap change-detect (roster+config)
+        bool                                           _rosterSigValid = false;
+        std::uint64_t                                  _shoutSig = 0;       // poll: shout word-unlock state
+        bool                                           _shoutSigValid = false;
+        bool                                           _defaultCast = true;
+        bool                                           _scopeAtScale = false;  // favorites-scope huge lists
+        bool                                           _debugLog = false;      // dev: info-level logging
+        bool                                           _dumpGrammar = false;   // dev: dump live grammar on enable
+        bool                                           _dumpGrammarPrev = false;
+        Hand                                           _equipHand = Hand::Left;
+        bool                                           _listenDefaultsApplied = false;  // base listen state initialized
+        bool                                           _pttBoundPrev = false;           // re-eval base when PTT bound-state changes
+        std::string                                    _lastConfigSnapshot;  // log-on-change
+        bool                                           _started = false;
+        std::atomic<bool>                              _gameReady{ false };
+        std::thread                                    _ticker;
+        std::atomic<bool>                              _tickerStarted{ false };
+    };
+}
