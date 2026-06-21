@@ -12,8 +12,10 @@ set -euo pipefail
 PROJ="/c/BASECAMP/projects/Thane/mods/SpeakUp"
 PKG="$PROJ/package"
 SP="$PKG/SKSE/Plugins/SpeakUp"   # runtime + models live here
+# CANONICAL output lives in the PROJECT, not the play/mods folder. dist/ holds the
+# one true SpeakUp-<version>.7z — the exact file uploaded to GitHub/Nexus. The MO2
+# mods folder is a disposable test playground; install into it FROM dist/ when testing.
 DIST="$PROJ/dist"
-DL="/c/Modding/Mods/Skyrim"
 SEVENZ="/c/Program Files/7-Zip/7z.exe"
 [ -x "$SEVENZ" ] || SEVENZ="/c/Modding/Modlists/Skyrim/Lorerim/tools/DIP/7-zip/7z.exe"
 
@@ -94,26 +96,14 @@ build_variant() {
     local out="$DIST/SpeakUp-$VERSION.7z"; rm -f "$out"
     ( cd "$stage" && "$SEVENZ" a -t7z -mx=9 "$(cygpath -w "$out")" "*" >/dev/null )
 
-    # 5) Verify the archive is complete before shipping to Downloads.
+    # 5) Verify the archive is complete. The canonical artifact stays in dist/ (project).
     verify_archive "$out" "$tag"
 
-    # 6) Copy to Downloads + write .meta only after verification passes.
-    cp -f "$out" "$DL/SpeakUp-$VERSION.7z"
-    cat > "$DL/SpeakUp-$VERSION.7z.meta" <<EOF
-[General]
-gameName=skyrimse
-modName=Speak Up
-version=$VERSION
-installed=false
-uninstalled=false
-removed=false
-paused=false
-EOF
     echo "  $tag -> $out  ($(du -h "$out" | cut -f1))"
     rm -rf "$stage"
 }
 
 build_variant sherpa 1 sherpa-onnx-c-api.dll onnxruntime.dll models/sherpa-onnx-streaming-zipformer-en-2023-06-26
 
-echo "=== done. Downloads: ==="
-ls -la "$DL"/SpeakUp-"$VERSION".7z | awk '{print $5, $NF}'
+echo "=== done. Canonical artifact (upload THIS to GitHub/Nexus): ==="
+ls -la "$DIST"/SpeakUp-"$VERSION".7z | awk '{print $5, $NF}'
