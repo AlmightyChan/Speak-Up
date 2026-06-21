@@ -3,8 +3,8 @@
 //
 // Reads the player's live spellbook and recognizes spoken commands against a
 // live grammar to cast/equip spells, powers, and shouts, plus hands-free
-// utilities. Recognition runs in-process and fully offline via Vosk (loaded
-// from libvosk.dll at runtime) — there is NO companion process and NO IPC.
+// utilities. Recognition runs in-process and fully offline via sherpa-onnx
+// (loaded as a DLL at runtime) — there is NO companion process and NO IPC.
 // Built on CommonLibSSE-NG; see docs/ for the architecture notes.
 //
 // License: GPL-3.0. Speak Up is a spiritual successor to Dragonborn Unlimited
@@ -13,6 +13,7 @@
 // ============================================================================
 
 #include "PCH.h"
+#include "ShoutVoiceHook.h"
 #include "TestHarness.h"
 #include "VoiceController.h"
 
@@ -61,7 +62,7 @@ static void SetupLog()
 
 // ----------------------------------------------------------------------------
 // SKSE lifecycle messages.
-//   kPostLoad   — start the in-process Vosk recognizer.
+//   kPostLoad   — start the in-process recognizer.
 //   kDataLoaded — forms exist; enumerate the live spell roster, install the
 //                 debug hotkey, register the SpellsLearned sink.
 // ----------------------------------------------------------------------------
@@ -75,6 +76,7 @@ static void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
     case SKSE::MessagingInterface::kDataLoaded:
         logger::info("kDataLoaded — forms available");
         VSC::VoiceController::Get().RegisterEvents();
+        VSC::InstallShoutVoiceMuteHook();  // optional Thu'um-voice suppression (silent shouts)
 #if VSC_ENABLE_TEST_HARNESS
         VSC::InstallTestHarness();
 #endif

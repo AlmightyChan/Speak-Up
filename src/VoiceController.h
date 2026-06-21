@@ -16,10 +16,6 @@
 #include <mutex>
 #include <thread>
 
-// Engine selector values stored in _engine
-#define SPEAKUP_ENGINE_VOSK   0
-#define SPEAKUP_ENGINE_SHERPA 1
-
 namespace VSC
 {
     class VoiceController
@@ -44,9 +40,9 @@ namespace VSC
         void ToggleListening();        // persistent listen toggle (hotkey or voice)
         void OnPushToTalkReleased();   // flush tail utterance when PTT key is released
 
-        // Restart the active recognizer without relaunching the game.  Notifies the player
-        // and calls Restart() on whichever engine is _activeEngine.  Must run on the main
-        // thread (called via AddTask / menu-close path from LoadConfig).
+        // Restart the recognizer without relaunching the game.  Notifies the player and
+        // re-initialises the recognizer + mic.  Must run on the main thread (called via
+        // AddTask / menu-close path from LoadConfig).
         void RestartRecognizer();
 
     private:
@@ -84,8 +80,6 @@ namespace VSC
         std::atomic<bool>                              _gameReady{ false };
         std::thread                                    _ticker;
         std::atomic<bool>                              _tickerStarted{ false };
-        int                                            _engine = SPEAKUP_ENGINE_VOSK;        // desired engine (from config; may change live)
-        int                                            _activeEngine = SPEAKUP_ENGINE_VOSK;  // latched at Start(); ALL runtime dispatch uses this so a mid-session MCM change can't desync the recognizer from the dispatch path (engine change applies on restart)
         float                                          _sherpaMatchThreshold = 0.62f;  // fuzzy match min score
         bool                                           _restartReqPrev = false;        // edge-trigger: bRestartRecognizer
     };

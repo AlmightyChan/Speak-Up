@@ -43,7 +43,7 @@ namespace VSC
 
     struct GrammarResult
     {
-        std::vector<std::string>                       phrases;  // for the Vosk grammar
+        std::vector<std::string>                       phrases;  // spoken phrases / fuzzy candidates
         std::unordered_map<std::string, CommandTarget> map;      // phrase -> action
         std::size_t                                    collisions = 0;  // dropped duplicates
         std::vector<std::string>                       conflicts;       // phrases two entries fought over

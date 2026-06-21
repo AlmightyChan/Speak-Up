@@ -3,14 +3,14 @@ cmake_minimum_required(VERSION 3.24)
 # ============================================================================
 # Speak Up — plug-and-play, Win11-proof offline voice spellcasting for
 # Skyrim SE/AE. Reads the player's live spellbook and recognizes spoken
-# commands in-process (no companion process, no IPC) via Vosk or sherpa-onnx
+# commands in-process (no companion process, no IPC) via sherpa-onnx
 # loaded as DLLs at runtime. Built on CommonLibSSE-NG (GPL-3.0).
 # Spiritual successor to Dragonborn Unlimited / Dragonborn Speaks Naturally;
 # no code from either is used.
 # ============================================================================
 project(
     VoiceSpellcasting
-    VERSION 1.2.1
+    VERSION 1.3.0
     LANGUAGES CXX
 )
 
@@ -50,8 +50,8 @@ set(SOURCES
     src/main.cpp
     src/SpellRoster.cpp
     src/Equipper.cpp
+    src/ShoutVoiceHook.cpp
     src/TestHarness.cpp
-    src/Recognizer.cpp
     src/SherpaRecognizer.cpp
     src/VoiceController.cpp
     src/Vocabulary.cpp
@@ -63,9 +63,8 @@ set(HEADERS
     src/Types.h
     src/SpellRoster.h
     src/Equipper.h
+    src/ShoutVoiceHook.h
     src/TestHarness.h
-    src/Recognizer.h
-    src/VoskLoader.h
     src/SherpaLoader.h
     src/SherpaRecognizer.h
     src/MicCapture.h

@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # Build the single, lean Speak Up install for release:
-#   SpeakUp-<VERSION>.7z  — sherpa-onnx engine (Engine=1)
-# sherpa is the SOLE shipped engine (the Vosk small/lgraph variants were retired).
-# It ships ONLY its own engine's runtime + model, with the engine fixed in the
-# shipped SpeakUp.ini. Plain data-root .7z (forward slashes).
+#   SpeakUp-<VERSION>.7z  — sherpa-onnx recognition engine.
+# Ships the recognizer runtime (DLLs) + model. Plain data-root .7z (forward slashes).
 #
 # VERSION is derived from the project() VERSION line in CMakeLists.txt so there is
 # a single source of truth.  Do NOT hardcode it here.
@@ -71,7 +69,7 @@ verify_archive() {
 }
 
 build_variant() {
-    local tag="$1" engine="$2"; shift 2; local keep=("$@")
+    local tag="$1"; shift 1; local keep=("$@")
     local stage="$PROJ/tmp/pkg-$tag"
     rm -rf "$stage"; mkdir -p "$stage"
 
@@ -83,27 +81,24 @@ build_variant() {
         cp -f "$PKG/$f" "$stage/$f"
     done
 
-    # 2) Fix the engine in the shipped SKSE INI for this variant.
-    sed -i "s/^Engine=.*/Engine=$engine/" "$stage/SKSE/Plugins/SpeakUp.ini"
-
-    # 3) Copy only this variant's runtime DLLs + model.
+    # 2) Copy the recognizer's runtime DLLs + model.
     for k in "${keep[@]}"; do
         mkdir -p "$stage/SKSE/Plugins/SpeakUp/$(dirname "$k")"
         cp -r "$SP/$k" "$stage/SKSE/Plugins/SpeakUp/$k"
     done
 
-    # 4) Zip. sherpa is the sole shipped file, so the archive is untagged.
+    # 3) Zip into a single data-root archive.
     local out="$DIST/SpeakUp-$VERSION.7z"; rm -f "$out"
     ( cd "$stage" && "$SEVENZ" a -t7z -mx=9 "$(cygpath -w "$out")" "*" >/dev/null )
 
-    # 5) Verify the archive is complete. The canonical artifact stays in dist/ (project).
+    # 4) Verify the archive is complete. The canonical artifact stays in dist/ (project).
     verify_archive "$out" "$tag"
 
     echo "  $tag -> $out  ($(du -h "$out" | cut -f1))"
     rm -rf "$stage"
 }
 
-build_variant sherpa 1 sherpa-onnx-c-api.dll onnxruntime.dll models/sherpa-onnx-streaming-zipformer-en-2023-06-26
+build_variant sherpa sherpa-onnx-c-api.dll onnxruntime.dll models/sherpa-onnx-streaming-zipformer-en-2023-06-26
 
 echo "=== done. Canonical artifact (upload THIS to GitHub/Nexus): ==="
 ls -la "$DIST"/SpeakUp-"$VERSION".7z | awk '{print $5, $NF}'

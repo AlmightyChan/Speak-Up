@@ -29,8 +29,8 @@ namespace VSC
     std::string SanitizeName(const std::string& displayName);
 
     // Returns the primary spoken phrase (priority 0) plus up to two OOV variant
-    // phrases (priority 1) for tokens unlikely to be in the Vosk small model's
-    // lexicon. Variants are produced by:
+    // phrases (priority 1) for tokens unlikely to be heard cleanly by the speech
+    // model. Variants are produced by:
     //   (a) compound-word splitting (e.g. "featherfall" -> "feather fall")
     //   (b) light grapheme respelling (e.g. "phantasm" -> "fantasm")
     // Returns an empty vector if the name sanitizes to nothing.

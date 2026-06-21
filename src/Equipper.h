@@ -29,8 +29,14 @@ namespace VSC
         Hand          equipHand = Hand::Left;      // hand used when a cast falls back to equip
         bool          playShoutAnimation = false;  // play the shout body animation on a voice-cast shout
         bool          shoutUseRealCast = true;     // 1 = dual-path auto-detect; 0 = force legacy CastSpellImmediate
+        bool          shoutPlayVoice = false;      // 1 = the character vocalizes the Thu'um (real pipeline for ALL
+                                                   // shouts); 0 (default, immersion) = silent — you are the voice, so
+                                                   // shouts fire their effect directly; only shouts that REQUIRE the
+                                                   // engine pipeline (movement/script/etc.) still run it.
         std::uint32_t shoutKeyDX = 0x39;           // DX scan code for the Shout/Sheathe key (default 0x39 = Space).
                                                    // Read from ControlMap at cast time; this is the INI fallback.
+        // (The per-word-level key HOLD durations are derived live from the engine's
+        // fShoutTime1/fShoutTime2 game settings at cast time — see Equipper.cpp.)
     };
     void SetCastSettings(const CastSettings& a_settings);
 

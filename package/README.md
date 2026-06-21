@@ -6,8 +6,8 @@ and Windows 11-proof.
 It reads your **live** spellbook every time you load a save and refreshes when you learn a
 spell or transform (Vampire Lord / Werewolf), so it works with any modlist and any spells,
 powers, or shouts you have — vanilla or modded, no patching, no database to maintain.
-Recognition runs **in-process and offline** (Vosk/Kaldi), constrained to exactly what you
-know, so it's fast, accurate, and nothing is ever sent anywhere.
+Recognition runs **in-process and offline** (sherpa-onnx), matched against exactly the
+spells, powers, and shouts you know, so it's fast, accurate, and nothing is ever sent anywhere.
 
 ## Requirements
 - **SKSE64** and **Address Library for SKSE** (SE or AE).
@@ -46,21 +46,22 @@ The phrase is the spell's **displayed name** (what you see in your Magic menu). 
 
 ## Settings
 Edit `SKSE/Plugins/SpeakUp.ini`, or use the in-game MCM (with MCM Helper). Highlights:
-default action (cast vs equip), default equip hand, instant-cast behavior, recognition
-sensitivity, a listen-toggle hotkey, and large-list scoping. Changes apply within a few
-seconds — no restart needed.
+default action (cast vs equip), default equip hand, instant-cast behavior, the character's
+Thu'um voice on/off, a listen-toggle hotkey, and large-list scoping. Changes apply within a
+few seconds — no restart needed.
 
 ## Antivirus note
-The recognizer ships native libraries (`libvosk` + its runtime). Some antivirus tools flag
+The recognizer ships native libraries (`sherpa-onnx` + its runtime). Some antivirus tools flag
 new unsigned DLLs heuristically. If voice does nothing, whitelist the mod's
 `SKSE/Plugins/SpeakUp/` folder. It runs entirely offline — no network.
 
 ## Troubleshooting
 - Plugin log: `Documents/My Games/Skyrim Special Edition/SKSE/SpeakUp.log`
   (LoreRim redirects this to `…/My Games/Skyrim.INI/SKSE/…`).
-- Recognized speech is logged as `[rec] heard '<text>' (conf 0.NN)` for tuning.
+- Recognized speech is logged as `[sherpa] heard '<text>'` for tuning.
 
 ## Credits / licenses
-- Speech recognition: [Vosk](https://alphacephei.com/vosk/) (Apache-2.0).
+- Speech recognition: [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0),
+  [onnxruntime](https://github.com/microsoft/onnxruntime) (MIT).
 - JSON: nlohmann/json (MIT). Architecture studied from Dragonborn Speaks Naturally (MIT).
 - This mod: GPL-3.0.

@@ -13,8 +13,8 @@ deliverables/
 # Built plugin (compiled from src/)
 package/SKSE/Plugins/SpeakUp.dll
 
-# Third-party Vosk runtime — fetched from the Vosk release, not re-hosted here.
-# See README "Fetching the Vosk runtime". Keeps the repo lean.
+# Third-party recognizer runtime + models — fetched from the sherpa-onnx release,
+# not re-hosted here. Keeps the repo lean.
 package/SKSE/Plugins/SpeakUp/*.dll
 package/SKSE/Plugins/SpeakUp/models/
 

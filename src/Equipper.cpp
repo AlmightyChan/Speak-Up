@@ -1,5 +1,6 @@
 #include "PCH.h"
 #include "Equipper.h"
+#include "ShoutVoiceHook.h"   // SetShoutVoiceMuted
 
 #include <atomic>
 #include <chrono>
@@ -287,26 +288,33 @@ namespace VSC
         // ----------------------------------------------------------------
         // ShoutNeedsRealPipeline — GENERAL detection (not hardcoded to any shout).
         //
-        // Returns true when ANY effect of the word-spell has a magic-effect archetype
-        // that cannot be replicated by a plain CastSpellImmediate — these archetypes
-        // either drive engine movement (kEtherealize, kSlowTime, kStagger), spawn
-        // world objects (kSpawnHazard, kSpawnScriptedRef, kSummonCreature), require
-        // the full Papyrus script pipeline (kScript), or need other engine state that
-        // only fires when the voice pipeline runs natively.
+        // Returns true ONLY for archetypes whose effect a plain CastSpellImmediate of the
+        // word-level spell cannot reproduce — engine SELF/WORLD state that only fires when
+        // the native voice pipeline runs: a forced movement/transform script (kScript:
+        // Whirlwind Sprint, Bend Will, Dragon Aspect), the ethereal state (kEtherealize),
+        // the global time scale (kSlowTime), or spawned world objects/creatures
+        // (kSpawnHazard: Storm Call/Cyclone; kSpawnScriptedRef; kSummonCreature: Call
+        // Dragon / Call of Valor). These keep the pipeline even in SILENT mode because the
+        // shout simply will not work otherwise — so they vocalize either way.
         //
-        // MEDIUM CONFIDENCE — archetype list calibrated against vanilla shouts:
-        //   Whirlwind Sprint   = kScript  (forced via real pipeline)
-        //   Become Ethereal    = kEtherealize
-        //   Slow Time          = kSlowTime
-        //   Storm Call         = kSpawnHazard + kScript
-        //   Call Dragon        = kSummonCreature + kScript
-        //   Cyclone            = kSpawnHazard
-        //   Bend Will (dragon) = kScript
-        //   Stagger (some)     = kStagger
-        // Unrelenting Force = kValueModifier (magnitude impulse) -> NORMAL path.
-        // If a modded shout mis-archives one of these archetypes on an otherwise
-        // simple effect, it will incorrectly use the real pipeline — that is safe
-        // (more feedback, no breakage) but may need the INI master switch to override.
+        // Everything else is delivered fine by a direct word-level cast and is therefore
+        // LEFT OFF this list so it stays SILENT in the default mode: target-applied effects
+        // like Unrelenting Force's push (kStagger), debuffs, drains, fear, cloaks, etc. The
+        // old list included kStagger et al., which wrongly forced Unrelenting Force onto the
+        // vocalizing pipeline (and, via the key-tap, collapsed it to word 1) — contradicting
+        // even this function's own original note that "Unrelenting Force -> NORMAL path".
+        //
+        // Verified against this user's actual (Requiem) load order via the record data:
+        // Requiem reimplements many shouts as kScript (Aura Whisper, Call Dragon, Animal
+        // Allegiance, Clear Skies, Bend Will) on top of vanilla's kScript Whirlwind Sprint,
+        // so the archetype check auto-catches them all with NO per-shout hardcoding. The
+        // effect-layer shouts (Unrelenting Force=kStagger, Fire/Frost Breath + Marked for
+        // Death + Cyclone=ValueModifier, Dismay=Demoralize, Elemental Fury=PeakValueModifier)
+        // are correctly LEFT OFF and take the silent direct cast at the correct word level.
+        //
+        // MEDIUM CONFIDENCE on the direct-cast set — needs in-game verification that the
+        // direct cast fully delivers each now-instant shout's effect. If one is missing on
+        // the instant path, add its archetype here. ShoutUseRealCast=0 forces instant for all.
         // ----------------------------------------------------------------
         bool ShoutNeedsRealPipeline(RE::SpellItem* a_spell)
         {
@@ -315,20 +323,21 @@ namespace VSC
                 if (!eff || !eff->baseEffect) continue;
                 using AID = RE::EffectArchetypes::ArchetypeID;
                 switch (eff->baseEffect->data.archetype) {
-                case AID::kScript:
-                case AID::kCloak:
-                case AID::kEtherealize:
-                case AID::kSlowTime:
-                case AID::kSpawnHazard:
-                case AID::kSpawnScriptedRef:
-                case AID::kBoundWeapon:
-                case AID::kSummonCreature:
-                case AID::kBanish:
-                case AID::kDisguise:
-                case AID::kAccumulateMagnitude:
-                case AID::kStagger:
+                // Engine self/world state a direct CastSpellImmediate cannot reproduce:
+                case AID::kScript:            // script-driven shouts (Whirlwind Sprint + most
+                                              // Requiem shouts — see note above)
+                case AID::kEtherealize:       // Become Ethereal
+                case AID::kSlowTime:          // Slow Time (global time scale)
+                case AID::kSpawnHazard:       // Storm Call / Cyclone hazards
+                case AID::kSpawnScriptedRef:  // Throw Voice
+                case AID::kSummonCreature:    // Call of Valor / Call Dragon
+                // Input-loop / transformation archetypes: no vanilla shout uses them, but
+                // auto-catch any MODDED shout that does (it would not survive a direct cast):
                 case AID::kTelekinesis:
+                case AID::kWerewolfFeed:
+                case AID::kWerewolf:
                 case AID::kGrabActor:
+                case AID::kVampireLord:
                     return true;
                 default:
                     break;
@@ -337,15 +346,49 @@ namespace VSC
             return false;
         }
 
+        // ShoutKeyHoldMs — how long to HOLD the synthetic Shout key for a given word level.
+        //
+        // The engine picks the released word from how long Shout is held, comparing the
+        // hold against two game settings: fShoutTime1 (hold >= this -> word 2) and
+        // fShoutTime2 (hold >= this -> word 3). We read them LIVE (Requiem and other
+        // overhauls retune them) so the timing is always correct for the active setup —
+        // not a hardcoded guess. word 1 is a brief tap below fShoutTime1; word 2 sits
+        // midway between the two thresholds (the only value that must fall in a window);
+        // word 3 clears fShoutTime2 with margin (over-holding just caps at the top word).
+        int ShoutKeyHoldMs(int a_level)
+        {
+            float t1 = 0.2f, t2 = 0.9f;  // engine defaults if the GMSTs are unreadable
+            if (auto* gmsts = RE::GameSettingCollection::GetSingleton()) {
+                if (auto* s1 = gmsts->GetSetting("fShoutTime1")) t1 = s1->GetFloat();
+                if (auto* s2 = gmsts->GetSetting("fShoutTime2")) t2 = s2->GetFloat();
+            }
+            // Sanitize degenerate/corrupt GMSTs so EVERY tier gets a positive, ordered hold
+            // window (a 0/negative value would otherwise collapse word 2/3 back to a word-1 tap).
+            if (t1 <= 0.0f) t1 = 0.2f;
+            if (t2 <= t1)   t2 = t1 + 0.7f;
+            float secs;
+            if (a_level >= RE::TESShout::VariationIDs::kThree) {
+                secs = t2 + 0.30f;                          // word 3: past fShoutTime2
+            } else if (a_level == RE::TESShout::VariationIDs::kTwo) {
+                secs = (t1 + t2) * 0.5f;                    // word 2: midway in the window
+            } else {
+                secs = t1 * 0.3f;                           // word 1: brief tap below t1
+            }
+            return static_cast<int>(secs * 1000.0f);
+        }
+
         // ----------------------------------------------------------------
-        // TryCastShoutRealPipeline — NEEDS-REAL path.
+        // TryCastShoutRealPipeline — full-pipeline path (movement/script shouts,
+        // and ALL shouts when the player wants the character to vocalize the Thu'um).
         //
-        // Equips the shout, sets HighProcessData word level, then injects the
-        // bound Shout key via Win32 SendInput so the engine runs its full voice
-        // pipeline (animation + sound + movement + scripts + cooldown).
+        // Equips the shout, then injects the bound Shout key via Win32 SendInput so
+        // the engine runs its full voice pipeline (animation + Thu'um sound + movement
+        // + scripts + cooldown). The key is HELD for a_holdMs and released async, so
+        // the engine charges to the spoken WORD LEVEL — an instantaneous tap always
+        // released word 1 (the "every shout only casts Fus" bug).
         //
-        // Sets g_injectingShoutKey=true for the duration of the SendInput call
-        // so ListenHotkeySink can ignore the synthetic event and avoid toggling
+        // Sets g_injectingShoutKey=true for the whole hold (down..up) so
+        // ListenHotkeySink can ignore the synthetic events and avoid toggling
         // push-to-talk if PTT happens to be bound to the same key.
         //
         // Returns true  = injected (real pipeline running).
@@ -360,7 +403,7 @@ namespace VSC
         // ----------------------------------------------------------------
         bool TryCastShoutRealPipeline(RE::PlayerCharacter* a_player, RE::TESShout* a_shout,
                                       RE::SpellItem* a_spell, RE::HighProcessData* a_high,
-                                      int a_level, const std::string& a_name)
+                                      int a_level, int a_holdMs, const std::string& a_name)
         {
             auto* eqm = RE::ActorEquipManager::GetSingleton();
             if (!eqm) {
@@ -395,33 +438,53 @@ namespace VSC
                              "using ShoutKeyDX=0x{:X}", a_name, shoutScan);
             }
 
-            // 4. Set the guard so ListenHotkeySink ignores this synthetic event
-            //    (prevents the injected Shout key from toggling PTT if they share a binding).
-            g_injectingShoutKey.store(true);
+            // 4. Acquire the single-injection lock (also the guard ListenHotkeySink uses to
+            //    ignore BOTH synthetic events for the whole hold, so the injected Shout key
+            //    can't toggle PTT if they share a binding). exchange(true): if a previous
+            //    shout's key-hold is STILL in flight, DROP this one rather than spawn a second
+            //    thread that would fight over the same scan code and mis-charge the word level
+            //    (the very bug the hold prevents). Only the owning keyup thread clears it.
+            if (g_injectingShoutKey.exchange(true)) {
+                logger::info("[cast] shout '{}' ignored — a shout-key injection is already in "
+                             "flight (mid-hold)", a_name);
+                return true;  // handled — do NOT fall through to the instant path (no double cast)
+            }
 
-            // 5. Inject key-down + key-up.  KEYEVENTF_SCANCODE sends a hardware-style
-            //    event that DirectInput/RawInput picks up like a physical key press.
-            INPUT inputs[2]{};
-            inputs[0].type       = INPUT_KEYBOARD;
-            inputs[0].ki.wScan   = static_cast<WORD>(shoutScan);
-            inputs[0].ki.dwFlags = KEYEVENTF_SCANCODE;
-            inputs[1].type       = INPUT_KEYBOARD;
-            inputs[1].ki.wScan   = static_cast<WORD>(shoutScan);
-            inputs[1].ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
-            UINT sent = ::SendInput(2, inputs, sizeof(INPUT));
-
-            // Clear the guard immediately after (the engine will have queued the event).
-            g_injectingShoutKey.store(false);
-
-            if (sent != 2) {
-                logger::warn("[cast] shout '{}' SendInput returned {} (expected 2) — "
+            // 5. Inject key-DOWN now; release after a_holdMs. Skyrim derives the released
+            //    word level from how long Shout is HELD — an instantaneous down+up taps
+            //    out at word 1 (the long-standing "every shout only casts Fus" bug), so we
+            //    hold the synthetic key for the spoken word level's duration and let the
+            //    engine charge to that tier. KEYEVENTF_SCANCODE sends a hardware-style
+            //    event DirectInput/RawInput picks up like a physical key press.
+            INPUT down{};
+            down.type       = INPUT_KEYBOARD;
+            down.ki.wScan   = static_cast<WORD>(shoutScan);
+            down.ki.dwFlags = KEYEVENTF_SCANCODE;
+            UINT sent = ::SendInput(1, &down, sizeof(INPUT));
+            if (sent != 1) {
+                g_injectingShoutKey.store(false);
+                logger::warn("[cast] shout '{}' SendInput(down) returned {} (expected 1) — "
                              "falling back to instant path", a_name, sent);
                 return false;  // caller falls through to instant path
             }
 
-            logger::info("[cast] shout '{}' (word level {}, spell {:08X}, shoutKeyDX=0x{:X}) "
-                         "[real-pipeline — equip+SendInput]",
-                a_name, a_level + 1, a_spell->GetFormID(), shoutScan);
+            // Release the key after the hold on a detached thread: SendInput is thread-safe
+            // and touches no game objects, so this is safe off the main thread, and async
+            // means we never block the main thread for up to ~1.6s while the shout charges.
+            const int holdMs = a_holdMs < 0 ? 0 : a_holdMs;
+            std::thread([shoutScan, holdMs]() {
+                std::this_thread::sleep_for(std::chrono::milliseconds(holdMs));
+                INPUT up{};
+                up.type       = INPUT_KEYBOARD;
+                up.ki.wScan   = static_cast<WORD>(shoutScan);
+                up.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
+                ::SendInput(1, &up, sizeof(INPUT));
+                g_injectingShoutKey.store(false);  // clear the guard once Shout is released
+            }).detach();
+
+            logger::info("[cast] shout '{}' (word level {}, spell {:08X}, shoutKeyDX=0x{:X}, "
+                         "hold {}ms) [real-pipeline — equip+SendInput, held to charge word level]",
+                a_name, a_level + 1, a_spell->GetFormID(), shoutScan, holdMs);
             return true;
         }
 
@@ -534,29 +597,41 @@ namespace VSC
             }
 
             // ----------------------------------------------------------------
-            // DUAL PATH SELECTION
+            // PATH SELECTION  (governed by two settings)
             //
-            // ShoutUseRealCast=0 (legacy master switch): force the instant path for
-            // ALL shouts regardless of archetype (keeps old behavior for users who
-            // need to avoid SendInput, e.g. exclusive fullscreen or stripped perms).
+            // ShoutPlayVoice (immersion toggle):
+            //   OFF (default): SILENT — you spoke the words, so YOU are the voice. The
+            //     shout fires its effect with no character Thu'um vocalization. Shouts
+            //     that don't need the engine pipeline take the fast instant path.
+            //   ON: the character vocalizes the Thu'um — run the full engine pipeline for
+            //     EVERY shout so the dragon-voice audio plays.
             //
-            // ShoutUseRealCast=1 (default — dual-path auto-detect):
-            //   NEEDS-REAL: ShoutNeedsRealPipeline() returned true -> run the engine's
-            //     full voice pipeline via EquipShout + SendInput.  This handles Whirlwind
-            //     Sprint (kScript), Become Ethereal (kEtherealize), Slow Time (kSlowTime),
-            //     Storm Call (kSpawnHazard), Call Dragon (kSummonCreature), Cyclone, etc.
-            //     If SendInput fails (returns != 2), fall through to the instant path as
-            //     a best-effort fallback so the shout still does *something*.
-            //   NORMAL: no problematic archetypes (e.g. Unrelenting Force, Elemental Fury,
-            //     Ice Form, Aura Whisper) -> CastSpellImmediate + ShakeCamera feedback.
-            //     Fast, no equip, no key injection.
+            // ShoutNeedsRealPipeline (per-shout, archetype-driven): even in SILENT mode,
+            //   movement/script/spawn shouts MUST run the engine pipeline to work at all —
+            //   Whirlwind Sprint (kScript), Become Ethereal (kEtherealize), Slow Time
+            //   (kSlowTime), Storm Call (kSpawnHazard), Call Dragon (kSummonCreature), etc.
+            //   These keep the pipeline regardless of the voice toggle (they will vocalize
+            //   as a side effect — unavoidable without breaking their movement/script).
+            //
+            // ShoutUseRealCast=0 (legacy master switch): forbid SendInput entirely — force
+            //   the instant path for ALL shouts (for exclusive-fullscreen / stripped-perms
+            //   users where injected input is swallowed; movement shouts may not fully fire).
+            //
+            // The pipeline now HOLDS the Shout key for the spoken word level's duration so
+            // the engine charges to that tier (a tap always released word 1). The instant
+            // path casts the exact word-level spell directly, so it is word-level correct too.
             // ----------------------------------------------------------------
-            const bool needsReal = g_cast.shoutUseRealCast && ShoutNeedsRealPipeline(spell);
+            const bool needsRealForEffect = ShoutNeedsRealPipeline(spell);
+            const bool usePipeline =
+                g_cast.shoutUseRealCast && (g_cast.shoutPlayVoice || needsRealForEffect);
 
-            if (needsReal) {
-                logger::info("[cast] shout '{}' word{} spell {:08X} -> NEEDS-REAL pipeline "
-                             "(archetype check)", a_name, level + 1, spell->GetFormID());
-                if (TryCastShoutRealPipeline(a_player, a_shout, spell, high, level, a_name)) {
+            if (usePipeline) {
+                const int holdMs = ShoutKeyHoldMs(level);
+                logger::info("[cast] shout '{}' word{} spell {:08X} -> PIPELINE ({}{})",
+                    a_name, level + 1, spell->GetFormID(),
+                    g_cast.shoutPlayVoice ? "Thu'um voice ON" : "silent default",
+                    needsRealForEffect ? ", effect needs pipeline" : "");
+                if (TryCastShoutRealPipeline(a_player, a_shout, spell, high, level, holdMs, a_name)) {
                     return;  // real pipeline running — done
                 }
                 // SendInput failed or ActorEquipManager missing — fall through to instant
@@ -565,7 +640,8 @@ namespace VSC
                              a_name);
             }
 
-            // NORMAL / fallback instant path.
+            // SILENT / fallback instant path: cast the exact word-level spell directly —
+            // correct word level, no Thu'um vocalization (you are the voice).
             CastShoutInstant(a_player, a_shout, spell, variation, high, level, a_name);
         }
 
@@ -616,6 +692,9 @@ namespace VSC
     void SetCastSettings(const CastSettings& a_settings)
     {
         g_cast = a_settings;
+        // Silent mode (ShoutPlayVoice OFF) => mute the player's Thu'um voice line; the
+        // shout effect/movement still runs. Voice ON => let the character vocalize.
+        SetShoutVoiceMuted(!a_settings.shoutPlayVoice);
     }
 
     void Execute(const RosterEntry& a_entry, Action a_action, Hand a_hand, bool a_dual, int a_shoutLevel,

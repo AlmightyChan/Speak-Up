@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 # ============================================================================
 # Out-of-game unit tests for the engine-free plugin logic (vocabulary aliases +
 # command grammar). Compiles the same source files the plugin uses — no RE::,
-# no game, no Vosk. Run: ctest --test-dir build  (or run the exe directly).
+# no game, no recognizer. Run: ctest --test-dir build  (or run the exe directly).
 # ============================================================================
 project(VoiceSpellcastingTests LANGUAGES CXX)
 

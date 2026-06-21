@@ -1,7 +1,6 @@
 #include "PCH.h"
 #include "VoiceController.h"
 #include "Equipper.h"   // for g_injectingShoutKey
-#include "Recognizer.h"
 #include "SherpaRecognizer.h"
 #include "Vocabulary.h"
 #include "PhraseNormalize.h"
@@ -300,9 +299,9 @@ namespace VSC
         }
 
         // Dovahzul word -> an ENGLISH re-spelling whose grapheme-to-phoneme guess is
-        // closer to how the word is actually spoken, so Vosk's offline g2p recognizes
-        // it. (Vosk grammars take TEXT only — no phoneme input — so we cannot supply a
-        // phoneme string like DBU's SAPI grammar did; respelling is the equivalent.)
+        // closer to how the word is actually spoken, so the speech model recognizes it
+        // (we feed the recognizer TEXT, not phonemes, so a g2p-friendly respelling is the
+        // way to nudge it toward the right pronunciation).
         // Curated table covers the vanilla Words of Power; anything else falls back to
         // regular Dovahzul vowel rules, so modded shouts still get a usable variant.
         std::string DovahRespell(const std::string& w)
@@ -462,32 +461,7 @@ namespace VSC
             g_toggleOn.store(!pttBound);
         }
 
-        Recognizer::Get().SetSensitivity(
-            std::strtof(ReadCfg("fSensitivity", "Sensitivity", "0.0").c_str(), nullptr));
-        Recognizer::Get().SetUtteranceThreshold(
-            std::strtof(ReadCfg("fUtteranceThreshold", "UtteranceThreshold", "1.0").c_str(), nullptr));
-
-        // Engine selection: 0 = Vosk (default), 1 = sherpa-onnx.
-        // Switching engines requires a restart — we only READ here and act at Start().
-        {
-            long eng = std::strtol(ReadCfg("iEngine", "Engine", "0").c_str(), nullptr, 10);
-            _engine = (eng == SPEAKUP_ENGINE_SHERPA) ? SPEAKUP_ENGINE_SHERPA : SPEAKUP_ENGINE_VOSK;
-        }
-        // The engine only swaps at launch. If the user changed it in the MCM after start,
-        // tell them a restart is needed (the running recognizer + dispatch stay on
-        // _activeEngine until then) so the change is never silently ineffective.
-        if (_started && _engine != _activeEngine) {
-            static int s_pendingWarned = -1;
-            if (s_pendingWarned != _engine) {
-                s_pendingWarned = _engine;
-                Notify("Speak Up: restart the game to switch speech engines");
-                logger::info("[voice] engine change pending ({} selected) — RESTART required; "
-                             "active engine stays {}",
-                    _engine == SPEAKUP_ENGINE_SHERPA ? "sherpa" : "vosk",
-                    _activeEngine == SPEAKUP_ENGINE_SHERPA ? "sherpa" : "vosk");
-            }
-        }
-        // Fuzzy match threshold for sherpa open-vocab transcripts (0..1); default 0.62.
+        // Fuzzy match threshold for the open-vocab transcripts (0..1); default 0.62.
         _sherpaMatchThreshold = std::strtof(
             ReadCfg("fSherpaMatchThreshold", "SherpaMatchThreshold", "0.62").c_str(), nullptr);
 
@@ -538,6 +512,10 @@ namespace VSC
         // (Unrelenting Force, Elemental Fury, etc.) get CastSpellImmediate + ShakeCamera.
         // ShoutUseRealCast=0 (legacy): force CastSpellImmediate for ALL shouts (no SendInput).
         cs.shoutUseRealCast = ReadCfgBool("bShoutUseRealCast", "ShoutUseRealCast", true);
+        // ShoutPlayVoice (immersion): 0 (default) = SILENT — you spoke the words, so you are
+        // the voice; shouts fire their effect with no character Thu'um vocalization. 1 = the
+        // character vocalizes the Thu'um (full engine pipeline for every shout).
+        cs.shoutPlayVoice = ReadCfgBool("bShoutPlayVoice", "ShoutPlayVoice", false);
         // ShoutKeyDX: DirectInput scan code for the Shout key, used when ControlMap returns
         // unmapped. Default 0x39 = Space (vanilla default shout/sheathe binding).
         {
@@ -553,21 +531,22 @@ namespace VSC
             std::to_string(g_toggleKey.load()) + "+" + std::to_string(g_toggleMod.load()) + "|" +
             std::to_string(g_pttKey.load()) + "+" + std::to_string(g_pttMod.load()) + "|" +
             std::to_string(_scopeAtScale) + "|" + std::to_string(cs.playShoutAnimation) + "|" +
-            std::to_string(_engine) + "|" + std::to_string(_sherpaMatchThreshold) + "|" +
-            std::to_string(cs.shoutUseRealCast) + "|" + std::to_string(cs.shoutKeyDX) + "|" +
+            std::to_string(_sherpaMatchThreshold) + "|" +
+            std::to_string(cs.shoutUseRealCast) + "|" + std::to_string(cs.shoutPlayVoice) + "|" +
+            std::to_string(cs.shoutKeyDX) + "|" +
             std::to_string(_restartReqPrev);
         if (snapshot != _lastConfigSnapshot) {
             _lastConfigSnapshot = snapshot;
             logger::info("[voice] config: defaultCast={} equipHand={} instantCast={} "
                          "allowConcentration={} allowLongCast={} longThreshold={:.2f} "
                          "toggle=0x{:X}+0x{:X} ptt=0x{:X}+0x{:X} scopeAtScale={} "
-                         "engine={} sherpaThreshold={:.2f} "
-                         "shoutUseRealCast={} shoutKeyDX=0x{:X}",
+                         "matchThreshold={:.2f} "
+                         "shoutUseRealCast={} shoutPlayVoice={} shoutKeyDX=0x{:X}",
                 _defaultCast, HandName(_equipHand), cs.instantCast, cs.allowConcentration,
                 cs.allowLongCast, cs.longCastThreshold, g_toggleKey.load(), g_toggleMod.load(),
                 g_pttKey.load(), g_pttMod.load(), _scopeAtScale,
-                (_engine == SPEAKUP_ENGINE_SHERPA ? "sherpa" : "vosk"), _sherpaMatchThreshold,
-                cs.shoutUseRealCast, cs.shoutKeyDX);
+                _sherpaMatchThreshold,
+                cs.shoutUseRealCast, cs.shoutPlayVoice, cs.shoutKeyDX);
         }
     }
 
@@ -576,43 +555,16 @@ namespace VSC
         if (_started) return;
         _started = true;
 
-        // Read config once so _engine and debug flags are set before we branch.
+        // Read the match threshold before starting the in-process recognizer.
         LoadMcmValues();
-        const bool debugOn = ReadCfgBool("bDebugLogging", "DebugLogging", true);
-        {
-            long eng = std::strtol(ReadCfg("iEngine", "Engine", "0").c_str(), nullptr, 10);
-            _engine = (eng == SPEAKUP_ENGINE_SHERPA) ? SPEAKUP_ENGINE_SHERPA : SPEAKUP_ENGINE_VOSK;
-        }
         _sherpaMatchThreshold = std::strtof(
             ReadCfg("fSherpaMatchThreshold", "SherpaMatchThreshold", "0.62").c_str(), nullptr);
 
-        // Latch the engine that we actually START. All runtime dispatch (HandleResult,
-        // Finalize, grammar push) keys off _activeEngine, NOT the live config _engine —
-        // so flipping the MCM engine mid-session does nothing until a restart, instead of
-        // desyncing the dispatch path from the still-running recognizer.
-        _activeEngine = _engine;
-
-        if (_engine == SPEAKUP_ENGINE_SHERPA) {
-            logger::info("[voice] engine = sherpa-onnx (open-vocab + fuzzy match, threshold={:.2f})",
-                _sherpaMatchThreshold);
-            SherpaRecognizer::Get().Start([](const std::string& phrase) {
-                VoiceController::Get().OnPhraseRecognized(phrase);
-            });
-        } else {
-            // Read the debug flag early so we can configure the OOV diagnostic before
-            // InitEngine runs (InitEngine calls set_log_level on the worker thread shortly
-            // after Start; _oovDiag must be set before that happens).
-            Recognizer::Get().SetOovDiag(debugOn);
-            if (debugOn) {
-                logger::info("[voice] OOV diagnostic enabled — Vosk will log rejected grammar words");
-            }
-            logger::info("[voice] engine = vosk (grammar-constrained exact match)");
-
-            // In-process recognizer (no external exe — WDAC blocks unsigned exes).
-            Recognizer::Get().Start([](const std::string& phrase) {
-                VoiceController::Get().OnPhraseRecognized(phrase);
-            });
-        }
+        logger::info("[voice] starting recognizer (open-vocab + fuzzy match, threshold={:.2f})",
+            _sherpaMatchThreshold);
+        SherpaRecognizer::Get().Start([](const std::string& phrase) {
+            VoiceController::Get().OnPhraseRecognized(phrase);
+        });
     }
 
     void VoiceController::RegisterEvents()
@@ -649,24 +601,15 @@ namespace VSC
     {
         // Flush the tail utterance so a command spoken right before releasing the key
         // still fires (push-to-talk: "hold, speak, release → it sends").
-        if (_activeEngine == SPEAKUP_ENGINE_SHERPA) {
-            SherpaRecognizer::Get().Finalize();
-        } else {
-            Recognizer::Get().Finalize();
-        }
+        SherpaRecognizer::Get().Finalize();
     }
 
     void VoiceController::RestartRecognizer()
     {
         // Must run on the main thread (called from LoadConfig via AddTask / menu-close).
-        logger::info("[voice] RestartRecognizer: restarting {} engine",
-            _activeEngine == SPEAKUP_ENGINE_SHERPA ? "sherpa" : "vosk");
+        logger::info("[voice] RestartRecognizer: restarting recognizer");
         Notify("Speak Up: restarting recognizer...");
-        if (_activeEngine == SPEAKUP_ENGINE_SHERPA) {
-            SherpaRecognizer::Get().Restart();
-        } else {
-            Recognizer::Get().Restart();
-        }
+        SherpaRecognizer::Get().Restart();
     }
 
     void VoiceController::DumpGrammar()
@@ -840,17 +783,17 @@ namespace VSC
 
         GrammarResult grammar = BuildGrammar(specs, _defaultCast, _equipHand);
 
-        // ---- Hard grammar cap (libvosk safety) ------------------------------------
-        // libvosk builds an in-memory FST from the grammar; tens of thousands of
-        // phrases blow up to multiple GB and CRASH inside libvosk (observed: `psb`
-        // adds ~5000 spells -> 44k phrases -> 12GB -> crash on save/load). Cap the
+        // ---- Hard phrase cap (bounded candidate set) ------------------------------
+        // The phrase list seeds the fuzzy candidate set searched on every utterance, so a
+        // runaway spell list (e.g. the `psb` console command adds every spell in the game
+        // -> tens of thousands of phrases) would bloat memory and slow each match. Cap the
         // bulk spell/equip phrases; per-word shout + global command phrases are added
         // AFTER the cap below so the important commands always survive.
         constexpr std::size_t kMaxBulkPhrases = 6000;
         if (grammar.phrases.size() > kMaxBulkPhrases) {
-            logger::warn("[voice] grammar has {} phrases — capping to {} to avoid a libvosk "
-                         "memory crash ({} dropped). This usually means a huge spell list "
-                         "(e.g. the 'psb' console command added every spell).",
+            logger::warn("[voice] grammar has {} phrases — capping to {} ({} dropped). This "
+                         "usually means a huge spell list (e.g. the 'psb' console command "
+                         "added every spell).",
                 grammar.phrases.size(), kMaxBulkPhrases,
                 grammar.phrases.size() - kMaxBulkPhrases);
             grammar.phrases.resize(kMaxBulkPhrases);  // map keeps extras (harmless/unused)
@@ -1013,7 +956,7 @@ namespace VSC
         // map keys (or a bounded subset thereof), the global command phrases, and the
         // wait phrases — exactly what DispatchExact searches.  Store normalized so the
         // DispatchExact lookup succeeds without an extra NormalizePhrase call.
-        if (_activeEngine == SPEAKUP_ENGINE_SHERPA) {
+        {
             std::vector<std::string> fuzzyCands;
             fuzzyCands.reserve(grammar.phrases.size());
             for (const auto& p : grammar.phrases) {
@@ -1034,13 +977,9 @@ namespace VSC
         }
         _lastPhrasesSorted = std::move(sorted);
 
-        if (_activeEngine == SPEAKUP_ENGINE_SHERPA) {
-            // Sherpa is open-vocabulary — no grammar push needed. SetGrammar is a no-op
-            // but call it so the phrase list is available for future hotword wiring.
-            SherpaRecognizer::Get().SetGrammar(grammar.phrases);
-        } else {
-            Recognizer::Get().SetGrammar(grammar.phrases);
-        }
+        // The recognizer is open-vocabulary — no grammar push needed. SetGrammar is a
+        // no-op but call it so the phrase list is available for future hotword wiring.
+        SherpaRecognizer::Get().SetGrammar(grammar.phrases);
         logger::info("[voice] grammar queued: {} phrases from {} entries ({} name conflicts resolved)",
             grammar.phrases.size(), specs.size(), grammar.collisions);
         if (!grammar.conflicts.empty()) {
@@ -1130,54 +1069,48 @@ namespace VSC
         const std::string phrase = NormalizePhrase(rawPhrase);
         if (phrase.empty()) return;
 
-        // Sherpa fuzzy path: open-vocab transcripts rarely match exactly, so run
-        // the phonetic + edit-distance fuzzy matcher against the bounded candidate set
-        // built in RefreshGrammar (_fuzzyCandidates).  Only attempt this when we did
-        // NOT already find an exact hit in DispatchExact — so check exact first.
+        // Open-vocab transcripts rarely match a command phrase exactly, so check the
+        // exact-match tables first, then fall back to the phonetic + edit-distance fuzzy
+        // matcher against the bounded candidate set built in RefreshGrammar.
         //
-        // IMPORTANT: we call DispatchExact (not HandleResult) for the matched phrase so
-        // the fuzzy branch is NEVER re-entered — no recursion risk even if NormalizePhrase
-        // is not idempotent on the candidate or the candidate somehow mismatches.
-        if (_activeEngine == SPEAKUP_ENGINE_SHERPA) {
-            // Quick exact-hit check (global + wait + map) before paying fuzzy cost.
-            bool exactHit = false;
-            if (GlobalCommandPhrases().count(phrase)) {
-                exactHit = true;
-            } else if (ParseWaitHours(phrase) > 0) {
-                exactHit = true;
-            } else {
-                std::lock_guard<std::mutex> lock(_mapMutex);
-                exactHit = (_phraseMap.count(phrase) > 0);
-            }
-
-            if (!exactHit) {
-                // _fuzzyCandidates is written on the main thread in RefreshGrammar and
-                // read here on the mic thread.  The worst case is a torn read on a
-                // refresh boundary: we get a stale or partially-updated list, which is
-                // acceptable — the next utterance will use the updated list.
-                std::vector<std::string> candidates;
-                {
-                    std::lock_guard<std::mutex> lock(_mapMutex);
-                    candidates = _fuzzyCandidates;  // copy under lock (bounded size)
-                }
-
-                FuzzyResult fuzzy = BestFuzzyMatch(phrase, candidates);
-                if (fuzzy.score >= static_cast<double>(_sherpaMatchThreshold)) {
-                    logger::info("[voice] sherpa transcript '{}' -> match '{}' (score {:.2f})",
-                        phrase, fuzzy.phrase, fuzzy.score);
-                    // Dispatch the matched phrase NON-recursively via DispatchExact.
-                    // The candidate strings are already normalized (built from normalized
-                    // grammar phrases) so no further NormalizePhrase is needed.
-                    DispatchExact(fuzzy.phrase);
-                } else {
-                    logger::info("[voice] sherpa transcript '{}' -> no match (best '{}' {:.2f})",
-                        phrase, fuzzy.phrase, fuzzy.score);
-                }
-                return;
-            }
+        // IMPORTANT: a fuzzy match dispatches via DispatchExact (not HandleResult), so the
+        // fuzzy branch is NEVER re-entered — no recursion risk even if NormalizePhrase is
+        // not idempotent on the candidate or the candidate somehow mismatches.
+        bool exactHit = false;
+        if (GlobalCommandPhrases().count(phrase)) {
+            exactHit = true;
+        } else if (ParseWaitHours(phrase) > 0) {
+            exactHit = true;
+        } else {
+            std::lock_guard<std::mutex> lock(_mapMutex);
+            exactHit = (_phraseMap.count(phrase) > 0);
         }
 
-        // Exact dispatch (Vosk path, or sherpa exact hit).
-        DispatchExact(phrase);
+        if (exactHit) {
+            DispatchExact(phrase);
+            return;
+        }
+
+        // Fuzzy fallback. _fuzzyCandidates is written on the main thread in RefreshGrammar
+        // and read here on the mic thread.  The worst case is a torn read on a refresh
+        // boundary: a stale or partially-updated list, which is acceptable — the next
+        // utterance will use the updated list.
+        std::vector<std::string> candidates;
+        {
+            std::lock_guard<std::mutex> lock(_mapMutex);
+            candidates = _fuzzyCandidates;  // copy under lock (bounded size)
+        }
+
+        FuzzyResult fuzzy = BestFuzzyMatch(phrase, candidates);
+        if (fuzzy.score >= static_cast<double>(_sherpaMatchThreshold)) {
+            logger::info("[voice] transcript '{}' -> match '{}' (score {:.2f})",
+                phrase, fuzzy.phrase, fuzzy.score);
+            // Candidate strings are already normalized (built from normalized grammar
+            // phrases) so no further NormalizePhrase is needed.
+            DispatchExact(fuzzy.phrase);
+        } else {
+            logger::info("[voice] transcript '{}' -> no match (best '{}' {:.2f})",
+                phrase, fuzzy.phrase, fuzzy.score);
+        }
     }
 }

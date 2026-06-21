@@ -30,11 +30,11 @@ namespace VSC
     {
         // -----------------------------------------------------------------------
         // OovRespell — light English grapheme-to-phoneme approximation for tokens
-        // that look unlikely to be in the small Vosk lexicon (fantasy-game names,
-        // compound words that got merged, Latin-rooted spell names).
+        // that look unlikely to be heard cleanly by the speech model (fantasy-game
+        // names, compound words that got merged, Latin-rooted spell names).
         //
         // Strategy: apply a small set of reliable English digraph/vowel rules so
-        // Vosk's acoustic model is more likely to match the spoken sound. We only
+        // the recognizer's acoustic model is more likely to match the spoken sound. We only
         // emit the respelling as a variant (priority 1), never replacing the raw
         // name (priority 0). Returns empty string if no transformation was made.
         // -----------------------------------------------------------------------
@@ -131,7 +131,7 @@ namespace VSC
                 std::size_t plen = std::strlen(*pfx);
                 if (n > plen + 3 && lowerToken.compare(0, plen, *pfx) == 0) {
                     // Make sure we don't split "firebolt" -> "fire bolt" if the suffix
-                    // is already a real word (just emit the split; Vosk will handle it).
+                    // is already a real word (just emit the split; the recognizer handles it).
                     std::string candidate = std::string(*pfx) + ' ' + lowerToken.substr(plen);
                     return NormalizePhrase(candidate);
                 }

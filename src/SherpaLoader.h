@@ -2,7 +2,7 @@
 
 // ============================================================================
 // SherpaLoader — dynamically loads sherpa-onnx-c-api.dll and onnxruntime.dll
-// and resolves the C API via GetProcAddress.  Mirrors VoskLoader exactly.
+// and resolves the C API via GetProcAddress.
 //
 // onnxruntime.dll is loaded FIRST (as a bare dependent) so that when
 // LOAD_WITH_ALTERED_SEARCH_PATH is used for sherpa-onnx-c-api.dll the runtime

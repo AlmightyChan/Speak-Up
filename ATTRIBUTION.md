@@ -2,11 +2,11 @@
 
 Speak Up is licensed GPL-3.0. It uses and/or studied the following:
 
-- **Vosk** (speech recognition library + small-en-us model) — Apache-2.0.
-  https://alphacephei.com/vosk/ . `libvosk.dll` 0.3.45 and the
-  `vosk-model-small-en-us-0.15` model are redistributed under Apache-2.0. The mingw runtime
-  DLLs (`libgcc_s_seh-1.dll`, `libstdc++-6.dll`, `libwinpthread-1.dll`) ship with the Vosk
-  Windows release and are required by `libvosk.dll`.
+- **sherpa-onnx** (speech recognition library + streaming Zipformer en model) — Apache-2.0.
+  https://github.com/k2-fsa/sherpa-onnx . `sherpa-onnx-c-api.dll` and the
+  `sherpa-onnx-streaming-zipformer-en-2023-06-26` model are redistributed under Apache-2.0.
+- **onnxruntime** (inference runtime for the model) — MIT. Copyright (c) Microsoft.
+  https://github.com/microsoft/onnxruntime . `onnxruntime.dll` redistributed unmodified.
 - **nlohmann/json** (single-header JSON) — MIT. https://github.com/nlohmann/json
 - **Dragonborn Speaks Naturally** — MIT. https://github.com/YihaoPeng/DragonbornSpeaksNaturally
   Studied for the plugin↔companion launch + named-pipe IPC pattern. No code copied verbatim.

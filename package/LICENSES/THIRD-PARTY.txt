@@ -9,18 +9,15 @@ source is made available to every recipient of this build. Public source repo:
 
 Redistributed third-party components:
 
-1. Vosk speech recognition library + model
-   Files: SKSE/Plugins/SpeakUp/libvosk.dll
-          SKSE/Plugins/SpeakUp/models/vosk-model-small-en-us-0.15/
-   License: Apache License 2.0 (see LICENSES/Apache-2.0.txt)
-   Copyright (c) Alpha Cephei Inc.  https://alphacephei.com/vosk/  (unmodified)
+1. sherpa-onnx speech recognition library + onnxruntime + model
+   Files: SKSE/Plugins/SpeakUp/sherpa-onnx-c-api.dll
+          SKSE/Plugins/SpeakUp/onnxruntime.dll
+          SKSE/Plugins/SpeakUp/models/sherpa-onnx-streaming-zipformer-en-2023-06-26/
+   sherpa-onnx + model: Apache License 2.0 (see LICENSES/Apache-2.0.txt).
+     Copyright (c) k2-fsa.  https://github.com/k2-fsa/sherpa-onnx  (unmodified)
+   onnxruntime: MIT License.  Copyright (c) Microsoft Corporation.
+     https://github.com/microsoft/onnxruntime  (unmodified)
 
-2. MinGW-w64 / GCC runtime libraries
-   Files: SKSE/Plugins/SpeakUp/libgcc_s_seh-1.dll, libstdc++-6.dll, libwinpthread-1.dll
-   GCC Runtime Library Exception (GPL-3.0 WITH the GCC Runtime Library Exception 3.1),
-   which permits redistribution alongside any program. Unmodified upstream binaries.
-   https://www.gnu.org/licenses/gcc-exception-3.1.html
-
-3. nlohmann/json (compiled into the plugin) — MIT. Copyright (c) 2013-2024 Niels Lohmann.
+2. nlohmann/json (compiled into the plugin) — MIT. Copyright (c) 2013-2024 Niels Lohmann.
 
 Architecture inspiration: Dragonborn Speaks Naturally (MIT). Built with SKSE64 + CommonLibSSE-NG.

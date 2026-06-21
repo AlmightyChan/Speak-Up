@@ -1,10 +1,10 @@
 #pragma once
 
 // ============================================================================
-// PhraseNormalize — the single normalization applied to BOTH the grammar words
-// pushed to Vosk and the phrase->form map keys: lower-case (ASCII), trim,
-// collapse internal whitespace to single spaces. Normalizing both sides keeps
-// the map keys byte-identical to the text Vosk returns.
+// PhraseNormalize — the single normalization applied to BOTH the spoken phrases
+// and the phrase->form map keys: lower-case (ASCII), trim, collapse internal
+// whitespace to single spaces. Normalizing both sides keeps the map keys
+// byte-identical to the recognizer's transcript text.
 // ============================================================================
 
 #include <cctype>

@@ -2,9 +2,9 @@
 
 // ============================================================================
 // SherpaRecognizer — in-process sherpa-onnx streaming Zipformer speech
-// recognition (alternative back-end to Recognizer/Vosk).
+// recognition: open-vocabulary ASR fed live from the microphone.
 //
-// THREADING MODEL (mirrors Recognizer exactly):
+// THREADING MODEL:
 //   - WORKER thread: stages assets, loads DLLs + model, creates the
 //     recognizer + one persistent stream, starts the mic, then runs the
 //     mic-starvation watchdog loop.
@@ -22,11 +22,11 @@
 // Endpointing is delegated to sherpa's built-in endpoint detector
 // (rule1 = 0.7 s trailing silence, rule2 = 0.45 s, rule3 = 20 s utterance).
 //
-// Self-heal: mirrors Recognizer.  Consecutive decode faults past kFaultThreshold
-// destroy + recreate the recognizer+stream from the stored SherpaOnnxOnlineRecognizerConfig.
+// Self-heal: consecutive decode faults past kFaultThreshold destroy + recreate the
+// recognizer+stream from the stored SherpaOnnxOnlineRecognizerConfig.
 //
-// Watchdog: mirrors Recognizer.  WorkerLoop runs a kWatchdogSecs wait_for loop
-// after InitEngine() so mic starvation is logged even after the first init.
+// Watchdog: WorkerLoop runs a kWatchdogSecs wait_for loop after InitEngine() so mic
+// starvation is logged even after the first init.
 //
 // Decode loop cap: the inner IsReady/Decode loop is bounded to kMaxDecodeIter
 // iterations per chunk; if exceeded a warning is logged and the iteration is

@@ -55,21 +55,6 @@
         {
             "pageDisplayName": "Voice",
             "content": [
-                { "text": "Recognition", "type": "header" },
-                {
-                    "id": "fSensitivity:Voice",
-                    "text": "Sensitivity",
-                    "type": "slider",
-                    "help": "Minimum confidence to accept a recognized phrase. 0 = accept anything (most responsive). Raise toward ~0.5 if background noise triggers false casts. (Vosk engine only.)",
-                    "valueOptions": { "sourceType": "ModSettingFloat", "min": 0.0, "max": 1.0, "step": 0.05, "defaultValue": 0.0, "formatString": "{2}" }
-                },
-                {
-                    "id": "fUtteranceThreshold:Voice",
-                    "text": "Response speed (utterance threshold)",
-                    "type": "slider",
-                    "help": "Seconds the recognizer waits after your best guess stops changing before it fires. LOWER = faster; too low can cut off multi-word phrases. (Vosk engine only.)",
-                    "valueOptions": { "sourceType": "ModSettingFloat", "min": 0.1, "max": 2.0, "step": 0.1, "defaultValue": 1.0, "formatString": "{1} s" }
-                },
                 { "text": "Listen Controls (optional)", "type": "header" },
                 {
                     "id": "bEnablePushToTalk:Voice",
@@ -91,6 +76,13 @@
             "pageDisplayName": "Advanced",
             "content": [
                 { "text": "Shouts", "type": "header" },
+                {
+                    "id": "bShoutPlayVoice:Voice",
+                    "text": "Character shouts aloud (Thu'um voice)",
+                    "type": "toggle",
+                    "help": "OFF (default): SILENT - you spoke the words, so you are the voice; shouts fire their effect at the word level you spoke, with no character vocalization. ON: the character vocalizes the Thu'um (the full engine shout pipeline runs for every shout). Movement shouts (Whirlwind Sprint, Become Ethereal) always use the pipeline, so they vocalize either way.",
+                    "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": false }
+                },
                 {
                     "id": "bShoutUseRealCast:Voice",
                     "text": "Full shout pipeline",

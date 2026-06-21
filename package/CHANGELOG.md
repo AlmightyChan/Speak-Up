@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.3.0 — multi-word shouts fixed, silent-shout option, sherpa-only
+- **Fixed: shouts now use the word level you actually speak.** Saying "Fus Ro Dah" (or
+  "Force Balance Push") fires the full three-word shout; "Fus" fires one word — instead of
+  every shout collapsing to its first word. Shouts that run through the game's voice
+  pipeline now charge to the spoken tier using the game's own shout-timing settings, rather
+  than releasing word 1 from an instant key-press.
+- **Added: "Character shouts aloud (Thu'um voice)" toggle** (MCM → Advanced; default OFF).
+  OFF = silent: you spoke the words, so YOU are the voice — the shout fires its effect at
+  the correct word level with no character vocalization. ON = the character vocalizes the
+  Thu'um. (On Anniversary Edition the voice line is suppressed via a fail-safe engine hook;
+  on other runtimes the shout still fires correctly but its voice line is left audible.)
+- **Changed: shout casting auto-detects what each shout needs — on any load order.** Whether
+  a shout needs the engine's voice pipeline (Whirlwind Sprint, Become Ethereal, Storm Call,
+  and script-reimplemented shouts such as Requiem's) versus a direct, silent cast
+  (Unrelenting Force, Fire Breath, Marked for Death, …) is decided by inspecting the shout's
+  magic effects at runtime — no per-shout patches and no hardcoded form IDs.
+- **Changed: sherpa-onnx is now the only recognition engine.** The engine toggle and the
+  entire retired Vosk back-end — code, runtime, model, and the Vosk-only Sensitivity /
+  Response-speed settings — were removed. The recognizer is always sherpa-onnx: leaner
+  install, one code path.
+
 ## 1.2.1 — shout unification, "Fus Ro Dah" fix, MCM Voice page, logging
 - **Saying a shout's NAME now matches saying its WORDS.** "Unrelenting Force" triggers the shout
   at your highest known word level — the exact same result as "Fus Ro Dah" or "Force Balance Push".
