@@ -489,11 +489,14 @@ namespace VSC
         }
 
         // ----------------------------------------------------------------
-        // CastShoutInstant — NORMAL path.
+        // CastShoutInstant — PRIMARY (silent) path: voice-slot cast.
         //
-        // Uses CastSpellImmediate on the kInstant caster for snappy casting of
-        // shouts whose effects are fully replicated by immediate cast (e.g.
-        // Unrelenting Force, Elemental Fury, Ice Form, etc.).
+        // Casts the exact word-level spell through the VOICE/shout caster slot
+        // (kOther) via CastSpellImmediate — the Dragonborn Unlimited / DSN technique.
+        // Routing through the voice slot (rather than kInstant) lets the shout's full
+        // magic effects fire — including the ones historically thought to need the key
+        // pipeline (Unrelenting Force's ragdoll, etc.) — while staying SILENT, because a
+        // magic cast does not trigger the Thu'um voice line. Instant, no key-hold.
         //
         // Adds tactile feedback so the cast feels like a real shout:
         //   - Screen shake via RE::ShakeCamera (strength 0.5, ~0.4s).
@@ -503,16 +506,22 @@ namespace VSC
         //
         // MEDIUM CONFIDENCE — needs in-game verification:
         //   - ShakeCamera feel (strength/duration) is a first-guess; tune in game.
-        //   - Dragon-voice vocalization (thu'um audio) requires the full engine voice
-        //     pipeline and will NOT play here; only spell-effect sounds fire.
+        //   - Whether every movement/script shout (Whirlwind Sprint, Become Ethereal,
+        //     Slow Time) fully fires through the voice slot — verify in game; the
+        //     key-hold pipeline remains available as the ShoutPlayVoice-ON path.
         // ----------------------------------------------------------------
         void CastShoutInstant(RE::PlayerCharacter* a_player, RE::TESShout* a_shout,
                               RE::SpellItem* a_spell, const RE::TESShout::Variation& a_variation,
                               RE::HighProcessData* a_high, int a_level, const std::string& a_name)
         {
-            auto* caster = a_player->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant);
+            // Cast through the VOICE/shout caster slot (kOther = magicCasters[kPowerOrShout]),
+            // NOT the kInstant caster — the Dragonborn Unlimited / DSN technique. Routing the
+            // word-level spell through the voice slot fires the shout's full magic effects
+            // (e.g. Unrelenting Force's ragdoll) instantly, while remaining SILENT (a magic
+            // cast does not trigger the Thu'um voice line). No key-hold, no delay.
+            auto* caster = a_player->GetMagicCaster(RE::MagicSystem::CastingSource::kOther);
             if (!caster) {
-                logger::warn("[cast] no power/shout caster for shout '{}'", a_name);
+                logger::warn("[cast] no voice/shout caster for shout '{}'", a_name);
                 return;
             }
             caster->CastSpellImmediate(a_spell, false, nullptr, 1.0f, false, 0.0f, a_player);
@@ -556,7 +565,7 @@ namespace VSC
             }
 
             logger::info("[cast] shout '{}' (word level {}, spell {:08X}, delivery {}, "
-                         "casting {}, cooldown {:.1f}s) [instant path — CastSpellImmediate]",
+                         "casting {}, cooldown {:.1f}s) [voice-slot — CastSpellImmediate via kOther]",
                 a_name, a_level + 1, a_spell->GetFormID(),
                 static_cast<int>(a_spell->GetDelivery()),
                 static_cast<int>(a_spell->GetCastingType()),
@@ -597,29 +606,35 @@ namespace VSC
             }
 
             // ----------------------------------------------------------------
-            // PATH SELECTION  (governed by two settings)
+            // PATH SELECTION  (two settings + per-shout archetype)
             //
-            // ShoutPlayVoice (immersion toggle):
-            //   OFF (default): SILENT — you spoke the words, so YOU are the voice. The
-            //     shout fires its effect with no character Thu'um vocalization. Shouts
-            //     that don't need the engine pipeline take the fast instant path.
-            //   ON: the character vocalizes the Thu'um — run the full engine pipeline for
-            //     EVERY shout so the dragon-voice audio plays.
+            // The native voice PIPELINE (EquipShout + held Shout key) is the ONLY path that
+            // reproduces a shout's full engine behaviour — crucially the movement/script
+            // shouts (Whirlwind Sprint's dash, Become Ethereal, Slow Time, Storm Call). The
+            // VOICE-SLOT instant cast (CastSpellImmediate via kOther) is faster and needs no
+            // SendInput, but it does NOT carry those script effects — VERIFIED in-game: silent
+            // Whirlwind Sprint via the voice slot fires the shout but never moves the player.
             //
-            // ShoutNeedsRealPipeline (per-shout, archetype-driven): even in SILENT mode,
-            //   movement/script/spawn shouts MUST run the engine pipeline to work at all —
-            //   Whirlwind Sprint (kScript), Become Ethereal (kEtherealize), Slow Time
-            //   (kSlowTime), Storm Call (kSpawnHazard), Call Dragon (kSummonCreature), etc.
-            //   These keep the pipeline regardless of the voice toggle (they will vocalize
-            //   as a side effect — unavoidable without breaking their movement/script).
+            // So we route by what the shout NEEDS, not by the voice toggle:
+            //   usePipeline = ShoutUseRealCast && (ShoutPlayVoice || ShoutNeedsRealPipeline)
             //
-            // ShoutUseRealCast=0 (legacy master switch): forbid SendInput entirely — force
-            //   the instant path for ALL shouts (for exclusive-fullscreen / stripped-perms
-            //   users where injected input is swallowed; movement shouts may not fully fire).
+            // ShoutNeedsRealPipeline(spell) (archetype-driven: kScript, kEtherealize,
+            //   kSlowTime, kSpawnHazard, kSummonCreature, …): these MUST run the pipeline to
+            //   work at all, in EVERY mode. In SILENT mode the Thu'um voice line they would
+            //   normally speak is suppressed by the AE DialogueItem mute hook
+            //   (SetShoutVoiceMuted, see ShoutVoiceHook) — so they move AND stay silent.
+            //   The hook drops only the player's VoicePower line; the movement/script (driven
+            //   separately) is untouched. (On non-AE the hook is absent, so they vocalize.)
             //
-            // The pipeline now HOLDS the Shout key for the spoken word level's duration so
-            // the engine charges to that tier (a tap always released word 1). The instant
-            // path casts the exact word-level spell directly, so it is word-level correct too.
+            // ShoutPlayVoice=ON: the player WANTS the character to vocalize, so run the
+            //   pipeline for EVERY shout (the mute is off, so the Thu'um plays).
+            //
+            // SILENT + simple shout (Unrelenting Force, Fire Breath, …): no script to lose,
+            //   so take the fast VOICE-SLOT instant cast at the spoken word level.
+            //
+            // ShoutUseRealCast=0 (escape hatch): forbid SendInput entirely (exclusive-
+            //   fullscreen / stripped-perms) — voice-slot for everything (movement shouts may
+            //   not fully fire, accepted trade-off for that environment).
             // ----------------------------------------------------------------
             const bool needsRealForEffect = ShoutNeedsRealPipeline(spell);
             const bool usePipeline =
@@ -627,21 +642,23 @@ namespace VSC
 
             if (usePipeline) {
                 const int holdMs = ShoutKeyHoldMs(level);
-                logger::info("[cast] shout '{}' word{} spell {:08X} -> PIPELINE ({}{})",
+                logger::info("[cast] shout '{}' word{} spell {:08X} -> PIPELINE ({}{}, hold {}ms)",
                     a_name, level + 1, spell->GetFormID(),
-                    g_cast.shoutPlayVoice ? "Thu'um voice ON" : "silent default",
-                    needsRealForEffect ? ", effect needs pipeline" : "");
+                    g_cast.shoutPlayVoice ? "Thu'um voice ON" : "silent + muted",
+                    needsRealForEffect ? ", effect needs pipeline" : "", holdMs);
                 if (TryCastShoutRealPipeline(a_player, a_shout, spell, high, level, holdMs, a_name)) {
                     return;  // real pipeline running — done
                 }
-                // SendInput failed or ActorEquipManager missing — fall through to instant
-                // path so the shout still does its magic-effect portion.
-                logger::warn("[cast] shout '{}' real pipeline failed — falling back to instant path",
+                // SendInput failed or ActorEquipManager missing — fall through to the
+                // voice-slot cast so the shout still fires its magic-effect portion.
+                logger::warn("[cast] shout '{}' pipeline unavailable — falling back to voice-slot cast",
                              a_name);
             }
 
-            // SILENT / fallback instant path: cast the exact word-level spell directly —
-            // correct word level, no Thu'um vocalization (you are the voice).
+            // SILENT + simple shout (or fallback): voice-slot instant cast at the word level.
+            logger::info("[cast] shout '{}' word{} spell {:08X} -> VOICE-SLOT instant cast{}",
+                a_name, level + 1, spell->GetFormID(),
+                needsRealForEffect ? " (FALLBACK — archetype wants pipeline; effect may not fire)" : "");
             CastShoutInstant(a_player, a_shout, spell, variation, high, level, a_name);
         }
 

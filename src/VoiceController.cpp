@@ -298,54 +298,43 @@ namespace VSC
             return fallback;
         }
 
-        // Dovahzul word -> an ENGLISH re-spelling whose grapheme-to-phoneme guess is
-        // closer to how the word is actually spoken, so the speech model recognizes it
-        // (we feed the recognizer TEXT, not phonemes, so a g2p-friendly respelling is the
-        // way to nudge it toward the right pronunciation).
-        // Curated table covers the vanilla Words of Power; anything else falls back to
-        // regular Dovahzul vowel rules, so modded shouts still get a usable variant.
+        // Dovahzul word -> an ENGLISH re-spelling whose grapheme-to-phoneme guess is closer
+        // to how the word is actually SPOKEN, so the open-vocab speech model is more likely
+        // to transcribe a spoken Word of Power to a string we match. We feed the recognizer
+        // TEXT (not phonemes), so a g2p-friendly respelling is how we nudge it.
+        //
+        // This is a single CONSISTENT rule derived from the full vanilla+DLC Word-of-Power
+        // set: Dovahzul pronunciation is regular, so the same rule auto-covers MODDED shouts
+        // with no per-word table to maintain. Returns "" when the rule changes nothing (the
+        // raw romanization is already a fine candidate, e.g. "dah", "kest", "toor").
         std::string DovahRespell(const std::string& w)
         {
-            // Identity entries (key == value) have been pruned: they waste a map lookup
-            // and the fallback vowel-rule path already handles them identically.
-            static const std::unordered_map<std::string, std::string> kMap = {
-                {"fus","foos"},{"ro","roh"},
-                {"yol","yoll"},{"toor","tor"},{"shul","shool"},
-                {"fo","foh"},{"diin","deen"},
-                {"wuld","woold"},
-                {"feim","faym"},{"zii","zee"},{"gron","grone"},
-                {"laas","lahs"},{"nir","neer"},
-                {"iiz","eez"},{"nus","noos"},
-                {"tiid","teed"},{"klo","kloh"},{"ul","ool"},
-                {"lok","loke"},
-                {"strun","stroon"},{"qo","koh"},
-                {"su","soo"},{"dun","doon"},
-                {"zun","zoon"},{"haal","hahl"},{"viik","veek"},
-                {"faas","fahs"},{"ru","roo"},{"maar","mar"},
-                {"joor","yor"},{"frul","frool"},
-                {"kaan","kahn"},{"ov","ohv"},
-                {"krii","kree"},{"lun","loon"},{"aus","ows"},
-                {"zul","zool"},{"mey","may"},{"gut","goot"},
-                {"raan","rahn"},{"mir","meer"},
-                {"od","ohd"},{"viing","veeng"},
-                {"gol","gohl"},{"dov","dohv"},
-                {"vur","voor"},{"shaan","shahn"},
-                {"hun","hoon"},{"kaal","kahl"},{"zoor","zor"},
-                {"gaar","gar"},{"nos","nohs"},
-                {"rii","ree"},{"vaaz","vahz"},{"zol","zole"},
-            };
-            auto it = kMap.find(w);
-            if (it != kMap.end()) return it->second;
+            std::string s;
+            s.reserve(w.size() + 4);
+            for (char c : w) s.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+            const std::string orig = s;
 
-            // Fallback: regular Dovahzul vowel rules (digraphs before singles).
-            std::string s = w;
-            auto repl = [&](const char* from, const char* to) {
-                std::string f = from, t = to; std::size_t p = 0;
+            auto repl = [&s](const char* from, const char* to) {
+                const std::string f = from, t = to;
+                std::size_t p = 0;
                 while ((p = s.find(f, p)) != std::string::npos) { s.replace(p, f.size(), t); p += t.size(); }
             };
-            repl("ii", "ee"); repl("aa", "ah"); repl("uu", "oo");
-            repl("ei", "ay"); repl("ey", "ay"); repl("u", "oo");
-            return s == w ? std::string{} : s;  // empty = no improvement over the raw form
+
+            // 1) Long-vowel digraphs -> their English-sounding form.
+            repl("aa", "ah"); repl("uu", "oo"); repl("ii", "ee");
+            repl("ei", "ay"); repl("ey", "ay"); repl("au", "ow");
+            // 2) The 'ir' vowel (dragon-font rune 7, e.g. Nir/Mir) -> "eer" (after 'ii').
+            repl("ir", "eer");
+            // 3) Single 'u' -> "oo" (Fus->foos, Su->soo); this can create new "oo".
+            repl("u", "oo");
+            // 4) Single 'o' -> "oh" (Ro->roh, Lok->lohk) WITHOUT mangling the "oo" sound:
+            //    park every "oo" on a sentinel, rewrite 'o', then restore.
+            repl("oo", "\x01"); repl("o", "oh"); repl("\x01", "oo");
+            // 5) Consonants the ASR reads differently than Dovahzul speaks them.
+            repl("j", "y");   // Joor -> "yoor"
+            repl("q", "k");   // Qo   -> "koh"
+
+            return s == orig ? std::string{} : s;  // empty = raw form already fine
         }
 
         // Spoken number words for 1..24 (index = value; [0] unused). Used to build the
@@ -462,8 +451,14 @@ namespace VSC
         }
 
         // Fuzzy match threshold for the open-vocab transcripts (0..1); default 0.62.
+        // This is the live "recognition confidence" knob (applied at HandleResult).
         _sherpaMatchThreshold = std::strtof(
             ReadCfg("fSherpaMatchThreshold", "SherpaMatchThreshold", "0.62").c_str(), nullptr);
+
+        // Endpoint trailing-silence rules ("sensitivity"/responsiveness). Pushed to the
+        // recognizer here so the values stay current; they take effect at the next
+        // recognizer (re)start (see PushEndpointRules / SherpaRecognizer::SetEndpointRules).
+        PushEndpointRules();
 
         // Scale handling: by default include ALL known spells (the hard cap below is
         // the crash failsafe). When this toggle is ON and the list is huge, scope the
@@ -555,10 +550,12 @@ namespace VSC
         if (_started) return;
         _started = true;
 
-        // Read the match threshold before starting the in-process recognizer.
+        // Read the match threshold + endpoint rules BEFORE starting the in-process
+        // recognizer so the very first InitEngine() uses the configured values.
         LoadMcmValues();
         _sherpaMatchThreshold = std::strtof(
             ReadCfg("fSherpaMatchThreshold", "SherpaMatchThreshold", "0.62").c_str(), nullptr);
+        PushEndpointRules();
 
         logger::info("[voice] starting recognizer (open-vocab + fuzzy match, threshold={:.2f})",
             _sherpaMatchThreshold);
@@ -602,6 +599,35 @@ namespace VSC
         // Flush the tail utterance so a command spoken right before releasing the key
         // still fires (push-to-talk: "hold, speak, release → it sends").
         SherpaRecognizer::Get().Finalize();
+    }
+
+    void VoiceController::PushEndpointRules()
+    {
+        // sherpa endpoint trailing-silence rules (seconds). Defaults mirror the values
+        // that were previously hardcoded in SherpaRecognizer::InitEngine. The recognizer
+        // clamps to sane bounds, so out-of-range INI values can't wedge recognition.
+        const float r1 = std::strtof(ReadCfg("fSherpaEndpointRule1", "SherpaEndpointRule1", "0.7").c_str(),  nullptr);
+        const float r2 = std::strtof(ReadCfg("fSherpaEndpointRule2", "SherpaEndpointRule2", "0.45").c_str(), nullptr);
+        const float r3 = std::strtof(ReadCfg("fSherpaEndpointRule3", "SherpaEndpointRule3", "20.0").c_str(), nullptr);
+        SherpaRecognizer::Get().SetEndpointRules(r1, r2, r3);
+    }
+
+    void VoiceController::CheckMicStatus()
+    {
+        // Edge-triggered so the player sees one notice, not a per-tick spam. The recognizer
+        // already retried the mic several times on launch (see SherpaRecognizer::AcquireMic);
+        // this just surfaces the final verdict gracefully.
+        const bool failed = SherpaRecognizer::Get().MicStartFailed();
+        if (failed && !_micFailNotified) {
+            _micFailNotified = true;
+            logger::warn("[voice] microphone did not start — notifying player");
+            Notify("Speak Up: mic couldn't connect. Try 'Restart recognizer' in the MCM "
+                   "(Developer), or relaunch.");
+        } else if (!failed && _micFailNotified) {
+            // Mic recovered (e.g. after a restart) — clear the latch and reassure.
+            _micFailNotified = false;
+            Notify("Speak Up: microphone connected.");
+        }
     }
 
     void VoiceController::RestartRecognizer()
@@ -651,7 +677,10 @@ namespace VSC
                 std::this_thread::sleep_for(3s);
                 if (!_gameReady.load()) continue;
                 if (auto* task = SKSE::GetTaskInterface()) {
-                    task->AddTask([]() { VoiceController::Get().RefreshGrammar(); });
+                    task->AddTask([]() {
+                        VoiceController::Get().CheckMicStatus();  // graceful mic-fail notice
+                        VoiceController::Get().RefreshGrammar();
+                    });
                 }
             }
         });
@@ -810,11 +839,11 @@ namespace VSC
         // (e.g. "Dah" is literally "D4"), which is unpronounceable to the offline
         // model. EditorIDs are kept in memory by po3 Tweaks (present in LoreRim).
         // Decode the dragon-font cipher used in Word-of-Power FULL names. The runes for
-        // vowel digraphs are stored as DIGITS — derived empirically from the game's own
-        // data: 1=aa, 2=ei, 3=ii, 4=ah, 8=oo. So "D4"->"Dah", "F2m"->"Feim", "N4"->"Nah",
-        // "T8r"->"Toor", "Z3"->"Zii". Letters pass through. Any other digit (none observed
-        // across the vanilla shouts) leaves a digit behind and we fall back to the English
-        // translation for that word.
+        // vowel digraphs are stored as DIGITS. The full rune set is 1=aa, 2=ei, 3=ii, 4=ah,
+        // 5=uu, 6=ur, 7=ir, 8=oo, 9=ey (1-4/7-9 verified against the vanilla+DLC word set;
+        // 5/6 from the Dragon alphabet, unused by any vanilla shout). So "D4"->"Dah",
+        // "F2m"->"Feim", "T8r"->"Toor", "N7"->"Nir", "M9"->"Mey". Letters pass through; any
+        // other digit leaves a digit behind and we fall back to the English translation.
         auto decodeDragonCipher = [](const std::string& full) -> std::string {
             std::string out;
             out.reserve(full.size() + 6);
@@ -824,7 +853,11 @@ namespace VSC
                     case '2': out += "ei"; break;
                     case '3': out += "ii"; break;
                     case '4': out += "ah"; break;
+                    case '5': out += "uu"; break;  // (Dragon-alphabet rune; unused by vanilla)
+                    case '6': out += "ur"; break;  // (Dragon-alphabet rune; unused by vanilla)
+                    case '7': out += "ir"; break;  // WordNir=N7, WordMir=M7
                     case '8': out += "oo"; break;
+                    case '9': out += "ey"; break;  // WordMey=M9
                     default:  out.push_back(c); break;
                 }
             }

@@ -56,6 +56,14 @@ namespace VSC
         // adding a second fuzzy level in the future would require an explicit opt-in.
         void DispatchExact(const std::string& normalizedPhrase);
         void LoadConfig();
+        // Read the sherpa endpoint trailing-silence rules ("sensitivity"/responsiveness)
+        // from MCM/INI and push them to the recognizer. They take effect at the next
+        // recognizer (re)start (sherpa caches endpoint config at creation).
+        void PushEndpointRules();
+        // Edge-triggered: surface a graceful in-game notice when the recognizer reports the
+        // mic couldn't start (and a "connected" notice when it recovers). Called from the
+        // ticker so it runs only while in-game.
+        void CheckMicStatus();
         void StartTicker();   // periodic refresh to catch transforms / word unlocks
 
         std::mutex                                     _mapMutex;
@@ -82,5 +90,6 @@ namespace VSC
         std::atomic<bool>                              _tickerStarted{ false };
         float                                          _sherpaMatchThreshold = 0.62f;  // fuzzy match min score
         bool                                           _restartReqPrev = false;        // edge-trigger: bRestartRecognizer
+        bool                                           _micFailNotified = false;       // edge-trigger: mic-couldn't-start notice
     };
 }

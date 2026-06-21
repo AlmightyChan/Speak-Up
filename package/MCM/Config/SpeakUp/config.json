@@ -11,14 +11,14 @@
                     "id": "iDefaultAction:Voice",
                     "text": "Default action",
                     "type": "enum",
-                    "help": "What happens when you say a spell/power/shout name with no prefix. Equip: equips it to your hand. Cast: fires it instantly. The 'cast'/'equip' prefixes always override.",
+                    "help": "What happens when you say a spell/power/shout name with no prefix. Equip: puts it in your hand. Cast: fires it instantly. Saying 'cast' or 'equip' first always overrides this.",
                     "valueOptions": { "sourceType": "ModSettingInt", "options": ["Equip", "Cast"], "defaultValue": 1 }
                 },
                 {
                     "id": "iEquipDefaultHand:Voice",
                     "text": "Default equip hand",
                     "type": "enum",
-                    "help": "Hand used by 'equip <spell>' (and a bare name when Default action is Equip). 'equip left/right/dual' always override.",
+                    "help": "Which hand 'equip <spell>' uses (and a bare name when Default action is Equip). Saying 'equip left/right/dual' always overrides this.",
                     "valueOptions": { "sourceType": "ModSettingInt", "options": ["Left", "Right", "Both"], "defaultValue": 0 }
                 },
                 { "text": "Instant Casting", "type": "header" },
@@ -26,14 +26,14 @@
                     "id": "bInstantCast:Voice",
                     "text": "Instant-cast spells",
                     "type": "toggle",
-                    "help": "ON: 'cast <spell>' fires the spell instantly (costs magicka). OFF: it equips the spell so you cast it yourself.",
+                    "help": "ON: 'cast <spell>' fires the spell instantly (costs magicka). OFF: 'cast <spell>' equips it so you cast it yourself.",
                     "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": true }
                 },
                 {
                     "id": "bAllowConcentration:Voice",
                     "text": "Allow instant concentration spells",
                     "type": "toggle",
-                    "help": "Concentration spells (e.g. Flames) misbehave when instant-cast, so by default they are equipped instead. Turn ON to instant-cast them anyway.",
+                    "help": "Concentration spells (e.g. Flames) misbehave when instant-cast, so they are equipped instead by default. Turn ON to instant-cast them anyway.",
                     "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": false }
                 },
                 {
@@ -47,63 +47,138 @@
                     "id": "fLongCastThreshold:Voice",
                     "text": "Long-charge threshold",
                     "type": "slider",
-                    "help": "Charge time (seconds) at/above which a spell counts as 'long'.",
+                    "help": "A spell counts as 'long-charge' when its charge time is at or above this many seconds. Affects the rule above.",
                     "valueOptions": { "sourceType": "ModSettingFloat", "min": 0.0, "max": 5.0, "step": 0.1, "defaultValue": 1.0, "formatString": "{2} s" }
                 }
             ]
         },
         {
-            "pageDisplayName": "Voice",
+            "pageDisplayName": "Shout Casting",
             "content": [
-                { "text": "Listen Controls (optional)", "type": "header" },
-                {
-                    "id": "bEnablePushToTalk:Voice",
-                    "text": "Enable push-to-talk",
-                    "type": "toggle",
-                    "help": "ON: HOLD the push-to-talk key to listen, release to send. OFF (default): always listening unless muted with the toggle key. Bind the key in SKSE/Plugins/SpeakUp.ini (PushToTalkKeyDX).",
-                    "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": false }
-                },
-                {
-                    "id": "bEnableListenToggle:Voice",
-                    "text": "Enable listen toggle",
-                    "type": "toggle",
-                    "help": "ON: PRESS the toggle key to switch hands-free listening on/off. Bind the key in SKSE/Plugins/SpeakUp.ini (ListenToggleKeyDX).",
-                    "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": false }
-                }
-            ]
-        },
-        {
-            "pageDisplayName": "Advanced",
-            "content": [
-                { "text": "Shouts", "type": "header" },
+                { "text": "Thu'um", "type": "header" },
                 {
                     "id": "bShoutPlayVoice:Voice",
                     "text": "Character shouts aloud (Thu'um voice)",
                     "type": "toggle",
-                    "help": "OFF (default): SILENT - you spoke the words, so you are the voice; shouts fire their effect at the word level you spoke, with no character vocalization. ON: the character vocalizes the Thu'um (the full engine shout pipeline runs for every shout). Movement shouts (Whirlwind Sprint, Become Ethereal) always use the pipeline, so they vocalize either way.",
+                    "help": "OFF (default): SILENT - you spoke the words, so you are the voice; the shout fires its effect with no character vocalization. ON: your character vocalizes the full Thu'um for every shout. Movement shouts (Whirlwind Sprint, Become Ethereal) always vocalize either way.",
                     "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": false }
                 },
                 {
                     "id": "bShoutUseRealCast:Voice",
                     "text": "Full shout pipeline",
                     "type": "toggle",
-                    "help": "ON (default): script/movement shouts (Whirlwind Sprint, Become Ethereal) use the real shout pipeline so their movement/scripts fire; normal shouts stay instant. OFF: force fast instant-cast for ALL shouts (use if the full pipeline misbehaves in fullscreen-exclusive).",
+                    "help": "ON (default): script/movement shouts (Whirlwind Sprint, Become Ethereal) use the real shout pipeline so their motion fires; simple shouts stay instant. OFF: force fast instant-cast for ALL shouts. Try OFF if shouts misbehave in exclusive-fullscreen.",
                     "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": true }
                 },
                 {
                     "id": "bPlayShoutAnimation:Voice",
                     "text": "Play shout animation",
                     "type": "toggle",
-                    "help": "EXPERIMENTAL. Plays the visible shout body animation on the instant-cast path. OFF by default.",
+                    "help": "EXPERIMENTAL. Plays the visible shout body animation on the instant-cast path. OFF by default; turn ON only if you want the animation and accept it may look rough.",
                     "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": false }
+                }
+            ]
+        },
+        {
+            "pageDisplayName": "Recognition",
+            "content": [
+                { "text": "Accuracy", "type": "header" },
+                {
+                    "id": "fSherpaMatchThreshold:Voice",
+                    "text": "Recognition confidence",
+                    "type": "slider",
+                    "help": "How closely what you say must match a spell name to count. Lower = more forgiving but more wrong casts; higher = stricter, may ignore valid speech. Default 0.62. Applies immediately.",
+                    "valueOptions": { "sourceType": "ModSettingFloat", "min": 0.40, "max": 0.90, "step": 0.01, "defaultValue": 0.62, "formatString": "{2}" }
+                },
+                { "text": "Responsiveness  (apply after Restart recognizer)", "type": "header" },
+                {
+                    "id": "fSherpaEndpointRule2:Voice",
+                    "text": "End-of-phrase pause",
+                    "type": "slider",
+                    "help": "How long a pause after you stop speaking before a command is sent. The main responsiveness knob. Lower = snappier but may cut off multi-word names; higher = waits longer, safer for long names. Default 0.45 s. Takes effect after Restart recognizer (Developer page) or relaunch.",
+                    "valueOptions": { "sourceType": "ModSettingFloat", "min": 0.15, "max": 1.50, "step": 0.05, "defaultValue": 0.45, "formatString": "{2} s" }
+                },
+                {
+                    "id": "fSherpaEndpointRule1:Voice",
+                    "text": "Hard silence cutoff",
+                    "type": "slider",
+                    "help": "A firm backstop: end the utterance after this much continuous silence even mid-phrase. Usually leave at default. Default 0.70 s. Takes effect after Restart recognizer or relaunch.",
+                    "valueOptions": { "sourceType": "ModSettingFloat", "min": 0.20, "max": 2.00, "step": 0.05, "defaultValue": 0.70, "formatString": "{2} s" }
+                },
+                {
+                    "id": "fSherpaEndpointRule3:Voice",
+                    "text": "Maximum phrase length",
+                    "type": "slider",
+                    "help": "Safety cap: force the utterance to end after this many seconds so recording can't run away. Most players never need to change this. Default 20 s. Takes effect after Restart recognizer or relaunch.",
+                    "valueOptions": { "sourceType": "ModSettingFloat", "min": 10.0, "max": 60.0, "step": 1.0, "defaultValue": 20.0, "formatString": "{0} s" }
                 },
                 { "text": "Large Spell Lists", "type": "header" },
                 {
                     "id": "bScopeAtScale:Voice",
                     "text": "Limit huge spell lists to favorites",
                     "type": "toggle",
-                    "help": "OFF (default): all known spells are voice-castable. ON: when you know 600+ spells, limit the vocabulary to FAVORITED + equipped spells (plus all powers/shouts) for speed/accuracy.",
+                    "help": "OFF (default): every known spell is voice-castable. ON: once you know 600+ spells, only FAVORITED and equipped spells (plus all powers/shouts) are listened for, which improves speed and accuracy.",
                     "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": false }
+                }
+            ]
+        },
+        {
+            "pageDisplayName": "Voice Controls",
+            "content": [
+                { "text": "If commands aren't heard: check your mic, then use Restart recognizer (Developer)", "type": "header" },
+                { "text": "Push-to-talk", "type": "header" },
+                {
+                    "id": "bEnablePushToTalk:Voice",
+                    "text": "Enable push-to-talk",
+                    "type": "toggle",
+                    "help": "ON: HOLD the push-to-talk key to listen, release to send. OFF (default): always listening unless you mute with the listen-toggle key.",
+                    "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": false },
+                    "groupControl": 1
+                },
+                {
+                    "id": "iPushToTalkKeyDX:Voice",
+                    "text": "Push-to-talk key",
+                    "type": "keymap",
+                    "help": "HOLD this key to listen; release to send. Click and press the key to bind.",
+                    "valueOptions": { "sourceType": "ModSettingInt", "defaultValue": -1 },
+                    "groupCondition": 1,
+                    "groupBehavior": "disable"
+                },
+                {
+                    "id": "iPushToTalkModDX:Voice",
+                    "text": "Push-to-talk modifier (optional)",
+                    "type": "keymap",
+                    "help": "Optional modifier held with the push-to-talk key (e.g. Alt for Alt+T). Leave unbound for none.",
+                    "valueOptions": { "sourceType": "ModSettingInt", "defaultValue": -1 },
+                    "groupCondition": 1,
+                    "groupBehavior": "disable"
+                },
+                { "text": "Listen toggle", "type": "header" },
+                {
+                    "id": "bEnableListenToggle:Voice",
+                    "text": "Enable listen toggle",
+                    "type": "toggle",
+                    "help": "ON: PRESS the toggle key to switch hands-free listening on/off (shows 'Speak Up: On/Off'). Handy for muting during conversations.",
+                    "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": false },
+                    "groupControl": 2
+                },
+                {
+                    "id": "iListenToggleKeyDX:Voice",
+                    "text": "Listen toggle key",
+                    "type": "keymap",
+                    "help": "PRESS to toggle listening on/off (hands-free). Click and press the key to bind.",
+                    "valueOptions": { "sourceType": "ModSettingInt", "defaultValue": -1 },
+                    "groupCondition": 2,
+                    "groupBehavior": "disable"
+                },
+                {
+                    "id": "iListenToggleModDX:Voice",
+                    "text": "Listen toggle modifier (optional)",
+                    "type": "keymap",
+                    "help": "Optional modifier held with the toggle key (e.g. Alt for Alt+T). Tip: set push-to-talk key = T and toggle key = T with this modifier = Alt -> hold T to talk, Alt+T to toggle.",
+                    "valueOptions": { "sourceType": "ModSettingInt", "defaultValue": -1 },
+                    "groupCondition": 2,
+                    "groupBehavior": "disable"
                 }
             ]
         },
@@ -115,21 +190,21 @@
                     "id": "bDebugLogging:Voice",
                     "text": "Debug logging",
                     "type": "toggle",
-                    "help": "ON: logs every recognized phrase + diagnostics to SpeakUp.log (useful for bug reports). OFF: only warnings/errors.",
+                    "help": "ON: logs every recognized phrase + diagnostics to SpeakUp.log (useful for bug reports). OFF: only warnings/errors. Defaults ON for first-run setup; turn OFF for normal play.",
                     "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": true }
                 },
                 {
                     "id": "bDumpGrammar:Voice",
                     "text": "Dump grammar to log",
                     "type": "toggle",
-                    "help": "When ON, writes the full live phrase-to-command grammar to SpeakUp.log once.",
+                    "help": "When ON, writes the full live phrase-to-command list to SpeakUp.log once. Useful for diagnosing why a name isn't recognized or conflicts with another. Defaults ON for first-run setup.",
                     "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": true }
                 },
                 {
                     "id": "bRestartRecognizer:Voice",
-                    "text": "Restart recognizer (toggle to restart)",
+                    "text": "Restart recognizer (flip to restart)",
                     "type": "toggle",
-                    "help": "Flip this to re-launch the speech recognizer WITHOUT restarting the game — use it if the mic was busy/disconnected/muted at launch (after you fix the mic). Closing the MCM applies it; the recognizer re-initialises and re-opens the mic.",
+                    "help": "Flip this to re-launch the speech recognizer WITHOUT restarting the game - use it if the mic was busy/disconnected/muted at launch (after you fix it), or to apply changed Responsiveness sliders. Closing the MCM applies it; the mic re-opens.",
                     "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": false }
                 }
             ]

@@ -65,6 +65,18 @@ namespace VSC
         // per-result confidence in the transducer C API result struct).
         void SetSensitivity(float a_required) { _sensitivity.store(a_required); }
 
+        // Endpoint trailing-silence rules (seconds) — the recognition "responsiveness"
+        // ("sensitivity") knobs. r1 = hard silence cutoff, r2 = end-of-phrase pause
+        // (primary), r3 = max utterance length. Stored now; applied at the NEXT
+        // InitEngine() (sherpa caches endpoint config when the recognizer is created), so
+        // a live change takes effect on the next recognizer (re)start.
+        void SetEndpointRules(float a_r1, float a_r2, float a_r3)
+        {
+            _endpointRule1.store(a_r1);
+            _endpointRule2.store(a_r2);
+            _endpointRule3.store(a_r3);
+        }
+
         // Force-finalize (no-op here — sherpa's built-in endpoint handles this).
         void Finalize() {}
 
@@ -76,6 +88,12 @@ namespace VSC
         // restart is already in flight.
         void Restart();
 
+        // True when the microphone could not be brought up after all startup attempts
+        // (device absent, waveInOpen failed, or opened but delivered no audio). Polled by
+        // VoiceController to surface a graceful "mic couldn't connect" message. Cleared
+        // when the mic next comes up.
+        bool MicStartFailed() const { return _micFailed.load(); }
+
         ~SherpaRecognizer();
 
     private:
@@ -83,6 +101,16 @@ namespace VSC
 
         void WorkerLoop();
         bool InitEngine();
+
+        // Bring the mic up with immediate retries: succeeds only when the device opens AND
+        // delivers real audio within kStartupAudioWaitSecs. Sets _micFailed on giving up.
+        bool AcquireMic();
+        // Block up to a_secs for the first real audio buffer (or _stop). Returns true if
+        // audio arrived.
+        bool WaitForFirstAudio(int a_secs);
+        // Close + release _mic with a bounded wait (a stalled driver can hang waveInClose);
+        // on overrun the handle is abandoned (session-scoped leak is safe).
+        void CloseMicBounded();
 
         // Called by the consumer when consecutive faults exceed kFaultThreshold:
         // destroys the recognizer+stream and recreates them from _cfg.
@@ -98,6 +126,17 @@ namespace VSC
         static constexpr int kWatchdogSecs   = 5;   // warn if no audio for this long
         static constexpr int kFaultThreshold = 5;   // consecutive faults before self-heal
         static constexpr int kMaxDecodeIter  = 512; // per-chunk IsReady/Decode cap
+        // Upper bound on how long Stop() waits for the mic (waveIn) to close before
+        // abandoning it. A stalled/disconnected audio driver — common with virtualized
+        // audio in a VM — can make waveInReset/waveInClose block indefinitely; never let
+        // that freeze the caller. On overrun we leak the handle (session-scoped, safe).
+        static constexpr int kMicCloseTimeoutMs = 1500;
+        // Startup mic acquisition: number of immediate attempts before surfacing a
+        // graceful failure, how long each attempt waits for the first real audio, and the
+        // pause between attempts.
+        static constexpr int kMicStartAttempts     = 3;
+        static constexpr int kStartupAudioWaitSecs = 2;
+        static constexpr int kMicRetryBackoffMs    = 250;
 
         SherpaLoader                      _sherpa;
         const SherpaOnnxOnlineRecognizer* _rec    = nullptr;
@@ -120,12 +159,20 @@ namespace VSC
         std::atomic<bool>    _started{ false };
         std::atomic<bool>    _stop{ false };
         std::atomic<float>   _sensitivity{ 0.0f };
+        // Endpoint trailing-silence rules (seconds), applied to _cfg at InitEngine().
+        // Defaults mirror the values that were previously hardcoded there.
+        std::atomic<float>   _endpointRule1{ 0.7f };   // hard silence cutoff
+        std::atomic<float>   _endpointRule2{ 0.45f };  // end-of-phrase pause (primary)
+        std::atomic<float>   _endpointRule3{ 20.0f };  // max utterance length
         // Replaces std::once_flag: a plain mutex+bool that is re-armable so Restart()
         // can issue a second Stop() after resetting the flag.
         std::mutex           _stopMutex;
         bool                 _stopInFlight = false;
         // Guards against concurrent Restart() calls.
         std::atomic<bool>    _restarting{ false };
+        // True when the mic failed to come up after all startup attempts (polled by
+        // VoiceController for a graceful notification). Cleared when the mic next succeeds.
+        std::atomic<bool>    _micFailed{ false };
 
         // Consumer-private (consumer thread only, no lock needed).
         int _consecutiveFaults = 0;

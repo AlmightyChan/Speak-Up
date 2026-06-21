@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.3.5 — restart crash fixed, mic auto-recovery, silent movement shouts, MCM overhaul
+- **Fixed: "Restart recognizer" no longer freezes the game.** Restarting the recognizer
+  (e.g. after the mic was busy at launch) could hard-lock the game while it tore down a
+  stalled microphone. The teardown now runs off the main thread with a hard time limit, so
+  the game keeps running even if the audio driver is wedged.
+- **Added: the microphone now retries automatically at launch.** If the mic doesn't come up
+  (no audio, wrong device, a hitch in the driver), Speak Up retries a few times on its own.
+  If it still can't connect you get a clear notice — "mic couldn't connect; try Restart
+  recognizer in the MCM, or relaunch" — instead of silent failure.
+- **Fixed: silent movement shouts move you again.** With the character-voice option OFF,
+  Whirlwind Sprint, Become Ethereal and other script/movement shouts now fire their full
+  effect (the dash, the ethereal state) while staying silent — the Thu'um voice line is
+  suppressed by the engine hook, but the movement/script is untouched. Simple shouts
+  (Unrelenting Force, Fire Breath) still take the instant path.
+- **Added: Recognition tuning sliders (MCM → Recognition).** "Recognition confidence" (how
+  close speech must match a spell name; applies immediately) and three responsiveness
+  sliders (end-of-phrase pause, hard-silence cutoff, max phrase length; apply on recognizer
+  restart) let you tune accuracy vs. snappiness.
+- **Changed: the MCM is reorganized into focused pages** — General, Shout Casting,
+  Recognition, Voice Controls, Developer — instead of one crowded "Advanced" page. The
+  push-to-talk and listen-toggle keys can again be bound in-game (the keymap controls are
+  back now that the page-name issue that blanked the old Voice page is fixed).
+
 ## 1.3.0 — multi-word shouts fixed, silent-shout option, sherpa-only
 - **Fixed: shouts now use the word level you actually speak.** Saying "Fus Ro Dah" (or
   "Force Balance Push") fires the full three-word shout; "Fus" fires one word — instead of

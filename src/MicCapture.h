@@ -100,6 +100,11 @@ namespace VSC
             _hwi = nullptr;
         }
 
+        // True once at least one WIM_DATA callback has delivered recorded bytes — i.e. the
+        // device is actually producing audio (not just opened). Used by the startup
+        // supervisor to tell "mic stood up" from "opened but silent".
+        bool ReceivedAudio() const { return _gotAudio.load(std::memory_order_acquire); }
+
         // Returns the time of the last WIM_DATA callback with recorded bytes.
         // Used by the watchdog to detect mic starvation.
         std::chrono::steady_clock::time_point LastAudioTime() const
@@ -139,6 +144,7 @@ namespace VSC
                         const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                             std::chrono::steady_clock::now().time_since_epoch()).count();
                         self->_lastAudioNs.store(ns, std::memory_order_relaxed);
+                        self->_gotAudio.store(true, std::memory_order_release);
                         self->_onAudio(hdr->lpData, static_cast<int>(hdr->dwBytesRecorded));
                     }
                 }
@@ -178,5 +184,8 @@ namespace VSC
         // int64_t (nanoseconds since steady_clock epoch) is trivially copyable so
         // std::atomic<int64_t> is lock-free on x64 and well-formed everywhere.
         std::atomic<int64_t>           _lastAudioNs{ 0 };
+
+        // Set true on the first WIM_DATA callback that carried recorded bytes.
+        std::atomic<bool>              _gotAudio{ false };
     };
 }

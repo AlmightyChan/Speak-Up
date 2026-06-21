@@ -4,10 +4,13 @@
 
 #include <Windows.h>
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <filesystem>
+#include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace logger = SKSE::log;
@@ -283,24 +286,28 @@ namespace VSC
 
         _stop.store(true);
 
-        // 1. Stop the mic so no new audio enters the queue.
-        if (_mic) _mic->Stop();
-
-        // 2. Wake and join the consumer thread BEFORE touching the stream.
+        // 1. Gate new audio OUT of the queue. EnqueueAudio() drops anything once
+        //    _audioStop is set, so the mic may keep firing callbacks harmlessly while we
+        //    shut down — we do NOT stop the mic first (stopping it can block on a stalled
+        //    driver, so that is deferred to the bounded step 3 below).
         {
             std::lock_guard<std::mutex> lk(_audioMutex);
             _audioStop = true;
             _audioCv.notify_all();
         }
+
+        // 2. Join the consumer then the worker. Both wake on the flags above and return
+        //    promptly; neither calls into the audio driver during shutdown, so these never
+        //    hang on a dead device. (Consumer joins BEFORE we null the stream in step 4.)
         if (_consumer.joinable()) _consumer.join();
+        if (_worker.joinable())   _worker.join();
 
-        // 3. Join the worker thread.
-        if (_worker.joinable()) _worker.join();
+        // 3. Tear down the mic with a BOUNDED wait (see CloseMicBounded): a stalled or
+        //    disconnected audio driver — exactly the state that makes a user hit "restart
+        //    recognizer" — can make waveInReset/waveInClose block indefinitely.
+        CloseMicBounded();
 
-        // 4. Release mic handle.
-        if (_mic) _mic.reset();
-
-        // 5. Null the stream + recognizer pointers under guard.
+        // 4. Null the stream + recognizer pointers under guard.
         //    Deliberately NOT freeing them at process-exit CRT teardown — leak is safe.
         //    (Same rationale as Recognizer::Stop.)
         std::lock_guard<std::mutex> lk(_gate);
@@ -318,46 +325,53 @@ namespace VSC
 
         logger::info("[sherpa] restart requested");
 
-        // Full teardown (idempotent; also works when _started is false).
-        Stop();
+        // Perform the FULL teardown + re-init on a DETACHED thread. Restart() is invoked on
+        // the MAIN GAME THREAD (VoiceController's ticker marshals the poll via SKSE AddTask),
+        // and tearing down a stalled mic must never block — let alone freeze — the game. The
+        // whole body is exception-walled so a throw in here can never reach std::terminate
+        // (an uncaught exception on a background thread would take the process down).
+        std::thread([this]() {
+            try {
+                // Full teardown (idempotent; bounded mic close — see Stop()).
+                Stop();
 
-        // Re-arm flags so Start() is accepted again.
-        {
-            std::lock_guard<std::mutex> sl(_stopMutex);
-            _stopInFlight = false;
-        }
-        _stop.store(false);
-        _started.store(false);
+                // Re-arm flags so the InitEngine path is accepted again.
+                {
+                    std::lock_guard<std::mutex> sl(_stopMutex);
+                    _stopInFlight = false;
+                }
+                _stop.store(false);
+                _started.store(false);
 
-        // Clear audio queue so stale data does not bleed into the fresh session.
-        {
-            std::lock_guard<std::mutex> lk(_audioMutex);
-            _audioQueue.clear();
-            _audioStop = false;
-        }
-        _consecutiveFaults = 0;
+                // Clear audio queue so stale data does not bleed into the fresh session.
+                {
+                    std::lock_guard<std::mutex> lk(_audioMutex);
+                    _audioQueue.clear();
+                    _audioStop = false;
+                }
+                _consecutiveFaults = 0;
 
-        // Re-use the PhraseHandler from the original Start() call.
-        if (!_onPhrase) {
-            logger::error("[sherpa] restart: no phrase handler set — was Start() ever called?");
+                // Re-use the PhraseHandler from the original Start() call.
+                if (!_onPhrase) {
+                    logger::error("[sherpa] restart: no phrase handler set — was Start() ever called?");
+                } else {
+                    // _cfg / _cfgStorage persist across restarts (never cleared in Stop()), and
+                    // InitEngine() rebuilds _rec, _stream and the mic FRESH on the new worker —
+                    // refreshing model paths from staged files and avoiding any use-after-free if
+                    // sherpa's DLL was left in a degraded state. _worker was joined in Stop(), so
+                    // it is non-joinable here and this assignment is well-formed.
+                    logger::info("[sherpa] restart: re-launching worker (InitEngine + mic re-open)");
+                    _started.store(true);
+                    _worker = std::thread([this] { WorkerLoop(); });
+                    logger::info("[sherpa] restarted (mic re-opened)");
+                }
+            } catch (const std::exception& e) {
+                logger::error("[sherpa] restart: exception during teardown/re-init: {}", e.what());
+            } catch (...) {
+                logger::error("[sherpa] restart: unknown exception during teardown/re-init");
+            }
             _restarting.store(false);
-            return;
-        }
-
-        // Note on _cfg / _cfgStorage: these are populated by InitEngine() and remain
-        // valid across restarts (we never clear them in Stop()).  The worker thread's
-        // InitEngine() call on the next Start() will rebuild them from the staged files,
-        // so model paths are refreshed correctly even if files were updated on disk.
-        // We do NOT preserve _rec/_stream — InitEngine() creates them fresh, which is the
-        // simplest correct behaviour and avoids any use-after-free if sherpa's DLL was in
-        // a degraded state.
-
-        logger::info("[sherpa] restart: re-launching worker (InitEngine + mic re-open)");
-        _started.store(true);
-        _worker = std::thread([this] { WorkerLoop(); });
-
-        logger::info("[sherpa] restarted (mic re-opened)");
-        _restarting.store(false);
+        }).detach();
     }
 
     // =========================================================================
@@ -376,6 +390,90 @@ namespace VSC
         chunk.data.assign(a_data, a_data + a_len);
         _audioQueue.push_back(std::move(chunk));
         _audioCv.notify_one();
+    }
+
+    // =========================================================================
+    // Private — microphone acquisition (worker thread)
+    // =========================================================================
+
+    void SherpaRecognizer::CloseMicBounded()
+    {
+        // Close + release _mic with a bounded wait. waveInReset/waveInClose (and the
+        // in-flight-callback drain) can block indefinitely on a stalled/disconnected audio
+        // driver. Run the close on a detached thread and wait only kMicCloseTimeoutMs. On
+        // overrun we abandon it: the destructor is still executing, so the MicCapture's
+        // buffers stay alive (no use-after-free) and we simply leak the handle + thread.
+        if (!_mic) return;
+        MicCapture* raw = _mic.release();
+        auto done = std::make_shared<std::atomic<bool>>(false);
+        std::thread([raw, done]() {
+            try { delete raw; } catch (...) {}  // ~MicCapture -> waveIn teardown
+            done->store(true, std::memory_order_release);
+        }).detach();
+
+        const auto deadline = std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds(kMicCloseTimeoutMs);
+        while (!done->load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (!done->load(std::memory_order_acquire)) {
+            logger::warn("[sherpa] mic close exceeded {} ms — abandoning audio handle "
+                         "(driver stalled / device disconnected?)", kMicCloseTimeoutMs);
+        }
+    }
+
+    bool SherpaRecognizer::WaitForFirstAudio(int a_secs)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(a_secs);
+        while (!_stop.load() && std::chrono::steady_clock::now() < deadline) {
+            if (_mic && _mic->ReceivedAudio()) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        return _mic && _mic->ReceivedAudio();
+    }
+
+    bool SherpaRecognizer::AcquireMic()
+    {
+        // The mic sometimes "doesn't stand up" on launch: waveInOpen succeeds but the
+        // device delivers no audio (driver/device race, a wrong default device, or a
+        // virtualized mic in a VM). Bring it up with up to kMicStartAttempts IMMEDIATE
+        // attempts, each requiring REAL audio to arrive within kStartupAudioWaitSecs.
+        for (int attempt = 1; attempt <= kMicStartAttempts && !_stop.load(); ++attempt) {
+            if (MicCapture::DeviceCount() == 0) {
+                logger::warn("[sherpa] mic attempt {}/{}: no input device present",
+                             attempt, kMicStartAttempts);
+            } else {
+                _mic = std::make_unique<MicCapture>(
+                    [this](const char* d, int n) { EnqueueAudio(d, n); });
+                if (std::string err = _mic->Start(); !err.empty()) {
+                    logger::warn("[sherpa] mic attempt {}/{}: start failed: {}",
+                                 attempt, kMicStartAttempts, err);
+                    CloseMicBounded();  // releases _mic (bounded; safe if half-opened)
+                } else if (WaitForFirstAudio(kStartupAudioWaitSecs)) {
+                    logger::info("[sherpa] mic up on attempt {} ({} device(s))",
+                                 attempt, MicCapture::DeviceCount());
+                    _micFailed.store(false);
+                    return true;
+                } else {
+                    logger::warn("[sherpa] mic attempt {}/{}: opened but delivered no audio "
+                                 "within {}s — retrying", attempt, kMicStartAttempts,
+                                 kStartupAudioWaitSecs);
+                    CloseMicBounded();
+                }
+            }
+            // Brief, interruptible backoff before the next attempt.
+            for (int i = 0; i < kMicRetryBackoffMs / 10 && !_stop.load(); ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        }
+
+        if (!_stop.load()) {
+            logger::error("[sherpa] microphone did not start after {} attempts — recognition "
+                          "unavailable until restart", kMicStartAttempts);
+            _micFailed.store(true);  // VoiceController polls this for a graceful notice
+        }
+        return false;
     }
 
     // =========================================================================
@@ -436,14 +534,21 @@ namespace VSC
         _cfg.model_config.num_threads            = 1;
         _cfg.decoding_method                     = "greedy_search";
         _cfg.enable_endpoint                     = 1;
-        // Trailing-silence thresholds tuned for snappy command casting (lower = less
-        // delay between finishing the phrase and the cast). rule2 fires after speech +
-        // a short pause; keep it low for responsiveness without cutting continuous
-        // multi-word phrases. (The decode itself is ~50-100 ms; this silence wait was
-        // the bulk of the perceived latency.)
-        _cfg.rule1_min_trailing_silence          = 0.7f;   // hard end after 0.7 s silence
-        _cfg.rule2_min_trailing_silence          = 0.45f;  // end 0.45 s after last word
-        _cfg.rule3_min_utterance_length          = 20.0f;  // 20 s max utterance
+        // Trailing-silence thresholds ("responsiveness"/"sensitivity") — lower = less
+        // delay between finishing the phrase and the cast. rule2 fires after speech + a
+        // short pause; keep it low for responsiveness without cutting continuous
+        // multi-word phrases. (The decode itself is ~50-100 ms; this silence wait was the
+        // bulk of the perceived latency.) Values come from MCM/INI via SetEndpointRules();
+        // defaults mirror the previous hardcoded values. Clamp to sane bounds so a bad INI
+        // can't wedge recognition (e.g. a 0 s pause that never finalizes).
+        const float epR1 = std::clamp(_endpointRule1.load(), 0.10f, 3.0f);
+        const float epR2 = std::clamp(_endpointRule2.load(), 0.10f, 3.0f);
+        const float epR3 = std::clamp(_endpointRule3.load(), 5.0f, 120.0f);
+        _cfg.rule1_min_trailing_silence          = epR1;   // hard end after this much silence
+        _cfg.rule2_min_trailing_silence          = epR2;   // end this long after last word
+        _cfg.rule3_min_utterance_length          = epR3;   // max utterance length
+        logger::info("[sherpa] endpoint rules: hard={:.2f}s pause={:.2f}s maxUtt={:.1f}s",
+                     epR1, epR2, epR3);
 
         logger::info("[sherpa] creating recognizer (enc={} ...)", enc);
         _rec = SafeCreateRecognizer(_sherpa.CreateOnlineRecognizer, &_cfg);
@@ -460,15 +565,10 @@ namespace VSC
             return false;
         }
 
-        if (MicCapture::DeviceCount() == 0) {
-            logger::error("[sherpa] no microphone device found — recognition unavailable");
-            return false;
-        }
-
-        _mic = std::make_unique<MicCapture>(
-            [this](const char* d, int n) { EnqueueAudio(d, n); });
-        if (std::string err = _mic->Start(); !err.empty()) {
-            logger::error("[sherpa] mic start failed: {}", err);
+        // Bring the mic up with immediate retries (sets _micFailed + returns false if it
+        // never delivers audio after all attempts). The recognizer + stream created above
+        // are reused across mic attempts, so only the flaky device acquisition retries.
+        if (!AcquireMic()) {
             return false;
         }
 
