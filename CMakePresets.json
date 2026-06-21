@@ -13,7 +13,7 @@
                 "VCPKG_TARGET_TRIPLET": "x64-windows-static-md",
                 "VCPKG_HOST_TRIPLET": "x64-windows-static-md",
                 "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDLL",
-                "VSC_DEPLOY_DIR": "C:/Modding/Modlists/Skyrim/Lorerim/mods/Speak Up/SKSE/Plugins"
+                "VSC_DEPLOY_DIR": "${sourceDir}/tmp/_devdeploy"
             }
         }
     ],

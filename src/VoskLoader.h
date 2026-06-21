@@ -26,7 +26,6 @@ namespace VSC
         using fn_model_new          = VoskModel * (*)(const char*);
         using fn_model_free         = void (*)(VoskModel*);
         using fn_recognizer_new_grm = VoskRecognizer * (*)(VoskModel*, float, const char*);
-        using fn_recognizer_set_grm = void (*)(VoskRecognizer*, const char*);
         using fn_accept_waveform    = int (*)(VoskRecognizer*, const char*, int);
         using fn_result             = const char* (*)(VoskRecognizer*);
         using fn_partial_result     = const char* (*)(VoskRecognizer*);
@@ -38,7 +37,6 @@ namespace VSC
         fn_model_new          model_new          = nullptr;
         fn_model_free         model_free         = nullptr;
         fn_recognizer_new_grm recognizer_new_grm = nullptr;
-        fn_recognizer_set_grm recognizer_set_grm = nullptr;
         fn_accept_waveform    accept_waveform    = nullptr;
         fn_result             result             = nullptr;
         fn_partial_result     partial_result     = nullptr;
@@ -70,11 +68,9 @@ namespace VSC
             get(final_result,       "vosk_recognizer_final_result");
             get(recognizer_free,    "vosk_recognizer_free");
             if (!ok) return "missing required vosk_* exports in libvosk.dll";
-            // Optional in some builds; recreate-on-change fallback if absent.
-            recognizer_set_grm = reinterpret_cast<fn_recognizer_set_grm>(
-                ::GetProcAddress(_dll, "vosk_recognizer_set_grm"));
+            // Optional export: present in newer libvosk builds; used for per-word confidence.
             recognizer_set_words = reinterpret_cast<fn_recognizer_set_words>(
-                ::GetProcAddress(_dll, "vosk_recognizer_set_words"));  // optional (confidence)
+                ::GetProcAddress(_dll, "vosk_recognizer_set_words"));
             return "";
         }
 

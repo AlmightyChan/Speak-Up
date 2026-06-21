@@ -58,11 +58,16 @@ namespace VSC
                     { "cast",  Action::Cast,  Hand::Right, false },
                 };
             case Category::Shout:
-                // The shout NAME only EQUIPS it. Casting is done per-word via the
-                // dragon-word phrases generated engine-side (VoiceController), since
-                // the word text + unlock state are runtime data.
+                // Saying the shout's NAME (e.g. "Unrelenting Force") casts it at the
+                // HIGHEST word level you currently know (shoutLevel -1 = highest unlocked,
+                // resolved in CastShoutNow) — a reliable fallback that sidesteps Dovahzul
+                // recognition. "equip <name>" equips it; "cast/shout <name>" force a cast.
+                // The per-word Dovahzul/English phrases (fus / fus ro / fus ro dah) are
+                // still added engine-side in VoiceController for tier-specific casts.
                 return {
-                    { "",      Action::Equip, Hand::Right, false },
+                    { "",      bare,          Hand::Right, false },  // bare name -> cast highest (default) or equip
+                    { "cast",  Action::Cast,  Hand::Right, false },
+                    { "shout", Action::Cast,  Hand::Right, false },
                     { "equip", Action::Equip, Hand::Right, false },
                 };
             }

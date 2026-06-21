@@ -32,10 +32,23 @@ static void SetupLog()
 
     auto logFilePath = *logsFolder / std::format("{}.log", PLUGIN_NAME);
     // Rotating sink (NOT truncate-on-open) so previous sessions survive a relaunch —
-    // dev testing kept losing the prior run's recognition log. Keeps ~3 x 5 MB files
-    // (SpeakUp.log + SpeakUp.1.log + SpeakUp.2.log); a startup banner marks sessions.
-    auto sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-        logFilePath.string(), 5u * 1024u * 1024u, 3u);
+    // dev testing kept losing the prior run's recognition log. Keeps ~2 x 1 MB files
+    // (SpeakUp.log + SpeakUp.1.log); small footprint since debug logging is default-on.
+    // A startup banner in each file marks where sessions begin.
+    //
+    // P2 fix: path::string() throws std::runtime_error when the Windows user profile
+    // path (Documents/…) contains non-ASCII characters (non-Latin usernames, accented
+    // letters, CJK, etc.) because MSVC's std::filesystem cannot represent them in the
+    // system ANSI codepage.  We catch that and fall back to C:\Windows\Temp\SpeakUp.log,
+    // which is always ASCII, so the plugin still loads and leaves a trace of the failure.
+    std::shared_ptr<spdlog::sinks::rotating_file_sink_mt> sink;
+    try {
+        sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+            logFilePath.string(), 1u * 1024u * 1024u, 2u);
+    } catch (const std::exception&) {
+        sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+            R"(C:\Windows\Temp\SpeakUp.log)", 1u * 1024u * 1024u, 2u);
+    }
     auto log = std::make_shared<spdlog::logger>("VSC", std::move(sink));
 
     log->set_level(spdlog::level::info);
@@ -85,7 +98,7 @@ static void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
 // ----------------------------------------------------------------------------
 extern "C" __declspec(dllexport) constinit SKSE::PluginVersionData SKSEPlugin_Version = [] {
     SKSE::PluginVersionData v{};
-    v.PluginVersion({ 1, 0, 0 });
+    v.PluginVersion({ PLUGIN_VERSION_MAJOR, PLUGIN_VERSION_MINOR, PLUGIN_VERSION_PATCH });
     v.PluginName(PLUGIN_NAME);
     v.AuthorName(PLUGIN_AUTHOR);
     v.UsesAddressLibrary(true);

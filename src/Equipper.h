@@ -8,26 +8,37 @@
 //   Equip: ActorEquipManager::EquipSpell (right/left/both) / EquipShout / power->voice
 //   Cast : MagicCaster::CastSpellImmediate from the chosen hand (auto-cast);
 //          dual = ActorMagicCaster::SetDualCasting(true) for an overcharged cast;
-//          shout = cast the shout's first-word variation spell.
+//          shout = DUAL PATH: real engine pipeline (equip + SendInput) for shouts
+//                  whose effects need it; CastSpellImmediate for simple shouts.
 // ============================================================================
 
 #include "PCH.h"
 #include "Types.h"
 #include "SpellRoster.h"
+#include <atomic>
 
 namespace VSC
 {
     // Casting behavior settings (from INI / MCM). Set on the main thread at config load.
     struct CastSettings
     {
-        bool  instantCast = true;          // voice "cast" instant-casts; else it equips
-        bool  allowConcentration = false;  // allow instant-casting concentration spells
-        bool  allowLongCast = false;       // allow instant-casting long-charge spells
-        float longCastThreshold = 1.0f;    // seconds of charge time that counts as "long"
-        Hand  equipHand = Hand::Left;      // hand used when a cast falls back to equip
-        bool  playShoutAnimation = false;  // play the shout body animation on a voice-cast shout
+        bool          instantCast = true;          // voice "cast" instant-casts; else it equips
+        bool          allowConcentration = false;  // allow instant-casting concentration spells
+        bool          allowLongCast = false;       // allow instant-casting long-charge spells
+        float         longCastThreshold = 1.0f;    // seconds of charge time that counts as "long"
+        Hand          equipHand = Hand::Left;      // hand used when a cast falls back to equip
+        bool          playShoutAnimation = false;  // play the shout body animation on a voice-cast shout
+        bool          shoutUseRealCast = true;     // 1 = dual-path auto-detect; 0 = force legacy CastSpellImmediate
+        std::uint32_t shoutKeyDX = 0x39;           // DX scan code for the Shout/Sheathe key (default 0x39 = Space).
+                                                   // Read from ControlMap at cast time; this is the INI fallback.
     };
     void SetCastSettings(const CastSettings& a_settings);
+
+    // Atomic guard: true while CastShoutNow is injecting the Shout key via SendInput.
+    // ListenHotkeySink in VoiceController checks this and skips PTT/toggle processing
+    // for that synthetic key event so it does not toggle push-to-talk listening.
+    // Written on the main thread (SKSE task); read on the input-event thread.
+    extern std::atomic<bool> g_injectingShoutKey;
 
     // Execute an action on the player. Safe to call from any thread.
     // a_shoutLevel: for shout casts, the word level (0/1/2) to cast; -1 = highest unlocked.

@@ -1,17 +1,16 @@
 cmake_minimum_required(VERSION 3.24)
 
 # ============================================================================
-# Voice Spellcasting — a plug-and-play, Win11-proof voice spellcasting mod for
-# Skyrim SE. Clean-room replacement for Dragonborn Unlimited (DBU): reads the
-# spellbook LIVE and recognizes against a LIVE grammar (Vosk companion over a
-# named pipe), so DBU's static-INI / capped-Papyrus / dead-WSR failure class
-# disappears. This is the SKSE plugin (CommonLibSSE-NG); the Vosk recognizer is
-# a separate auto-launched companion process.
-# License: GPL-3.0. IPC flow studied from Dragonborn Speaks Naturally (MIT).
+# Speak Up — plug-and-play, Win11-proof offline voice spellcasting for
+# Skyrim SE/AE. Reads the player's live spellbook and recognizes spoken
+# commands in-process (no companion process, no IPC) via Vosk or sherpa-onnx
+# loaded as DLLs at runtime. Built on CommonLibSSE-NG (GPL-3.0).
+# Spiritual successor to Dragonborn Unlimited / Dragonborn Speaks Naturally;
+# no code from either is used.
 # ============================================================================
 project(
     VoiceSpellcasting
-    VERSION 1.0.0
+    VERSION 1.2.1
     LANGUAGES CXX
 )
 
@@ -53,6 +52,7 @@ set(SOURCES
     src/Equipper.cpp
     src/TestHarness.cpp
     src/Recognizer.cpp
+    src/SherpaRecognizer.cpp
     src/VoiceController.cpp
     src/Vocabulary.cpp
     src/CommandGrammar.cpp
@@ -66,11 +66,14 @@ set(HEADERS
     src/TestHarness.h
     src/Recognizer.h
     src/VoskLoader.h
+    src/SherpaLoader.h
+    src/SherpaRecognizer.h
     src/MicCapture.h
     src/VoiceController.h
     src/PhraseNormalize.h
     src/Vocabulary.h
     src/CommandGrammar.h
+    src/FuzzyMatch.h
 )
 
 add_library(${PROJECT_NAME} SHARED ${SOURCES} ${HEADERS})
@@ -79,9 +82,15 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     PLUGIN_NAME="${PLUGIN_NAME}"
     PLUGIN_AUTHOR="${PLUGIN_AUTHOR}"
     PLUGIN_VERSION="${PLUGIN_VERSION}"
+    PLUGIN_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+    PLUGIN_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+    PLUGIN_VERSION_PATCH=${PROJECT_VERSION_PATCH}
 )
 
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/extern
+)
 target_link_libraries(${PROJECT_NAME} PRIVATE CommonLibSSE::CommonLibSSE nlohmann_json::nlohmann_json winmm)
 target_precompile_headers(${PROJECT_NAME} PRIVATE src/PCH.h)
 

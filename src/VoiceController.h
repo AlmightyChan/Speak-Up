@@ -16,6 +16,10 @@
 #include <mutex>
 #include <thread>
 
+// Engine selector values stored in _engine
+#define SPEAKUP_ENGINE_VOSK   0
+#define SPEAKUP_ENGINE_SHERPA 1
+
 namespace VSC
 {
     class VoiceController
@@ -40,10 +44,21 @@ namespace VSC
         void ToggleListening();        // persistent listen toggle (hotkey or voice)
         void OnPushToTalkReleased();   // flush tail utterance when PTT key is released
 
+        // Restart the active recognizer without relaunching the game.  Notifies the player
+        // and calls Restart() on whichever engine is _activeEngine.  Must run on the main
+        // thread (called via AddTask / menu-close path from LoadConfig).
+        void RestartRecognizer();
+
     private:
         VoiceController() = default;
 
         void HandleResult(const std::string& rawPhrase);
+        // Dispatch a phrase that is already normalized and known to exist in the
+        // exact-match tables (phraseMap / global commands / wait phrases).
+        // Called by HandleResult directly AND by the fuzzy branch to avoid recursion.
+        // a_allowFuzzy is always false here; the parameter is kept as a firewall so
+        // adding a second fuzzy level in the future would require an explicit opt-in.
+        void DispatchExact(const std::string& normalizedPhrase);
         void LoadConfig();
         void StartTicker();   // periodic refresh to catch transforms / word unlocks
 
@@ -51,6 +66,7 @@ namespace VSC
         std::vector<RosterEntry>                       _roster;
         std::unordered_map<std::string, CommandTarget> _phraseMap;
         std::vector<std::string>                       _lastPhrasesSorted;  // skip-if-unchanged
+        std::vector<std::string>                       _fuzzyCandidates;    // bounded candidate set for sherpa fuzzy match
         std::uint64_t                                  _rosterSig = 0;      // cheap change-detect (roster+config)
         bool                                           _rosterSigValid = false;
         std::uint64_t                                  _shoutSig = 0;       // poll: shout word-unlock state
@@ -68,5 +84,9 @@ namespace VSC
         std::atomic<bool>                              _gameReady{ false };
         std::thread                                    _ticker;
         std::atomic<bool>                              _tickerStarted{ false };
+        int                                            _engine = SPEAKUP_ENGINE_VOSK;        // desired engine (from config; may change live)
+        int                                            _activeEngine = SPEAKUP_ENGINE_VOSK;  // latched at Start(); ALL runtime dispatch uses this so a mid-session MCM change can't desync the recognizer from the dispatch path (engine change applies on restart)
+        float                                          _sherpaMatchThreshold = 0.62f;  // fuzzy match min score
+        bool                                           _restartReqPrev = false;        // edge-trigger: bRestartRecognizer
     };
 }
