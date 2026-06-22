@@ -1,5 +1,49 @@
 # Changelog
 
+## 2.0.0 — instant shouts on by default, sharper recognition, smarter matching
+
+This is a major-version bump because two big features are now ON by default — instant shouts
+and spell-name biasing — so it's a real change in how the mod feels out of the box. The
+silent-shout default and your in-game tuning sliders are unchanged.
+
+**New defaults (upgrade note)**
+- **Instant shouts default ON.** Shouts now fire at the spoken word level almost instantly
+  instead of charging for up to 1.2 s. The full pipeline still runs, so Whirlwind Sprint's
+  dash, Become Ethereal, Storm Call and every other script/movement shout work exactly as
+  before — just without the wait. If a shout ever fires the wrong word level, the legacy
+  timed-charge fallback is one toggle away (MCM → Shout Casting → Instant shouts → OFF).
+- **Spell-name biasing default ON.** The recognizer is now biased toward your live spell/
+  shout/power names, which sharply improves recognition of proper nouns (Conjure Storm
+  Atronach), dragon words and Requiem reimplementations. If you ever hear a spell fire when
+  you didn't say one, lower the strength or turn it off (MCM → Recognition).
+
+**Recognition**
+- **Sharper decoder (beam search).** The recognizer now uses modified-beam-search instead of
+  greedy decoding — meaningfully more accurate on multi-word phrases and proper nouns, with
+  negligible CPU cost. Falls back to greedy automatically if a model ever rejects it.
+- **Run-on phrases now match.** Said quickly, "Fus Ro Dah" comes out of the model as one
+  token ("pusrodah") instead of three; the matcher now compares ignoring word gaps, so the
+  run-together form still fires the full shout (used to stop at word 2). Verified to add no
+  false matches across the live roster.
+- **Dropped verbs on summons now match.** The model routinely drops the leading "Conjure"
+  / "Summon" ("storm atronach" for "Conjure Storm Atronach"); the prefix-stripped form is
+  now registered as an alias, so the verbless speech still casts.
+- **Tolerates the model's most common mishearings.** Short shout words constantly get their
+  "breathy" leading consonant swapped (f/v/b/p/w → each other; "Fus" → "boos", "Wuld" →
+  "bold"). The matcher now folds that consonant family so those resolve to the right shout
+  without loosening the threshold (no false matches across the live roster).
+
+**Shouts**
+- **Instant pipeline shouts** (see default note above; MCM → Shout Casting). Implemented by
+  briefly retiming the game's shout-threshold settings (fShoutTime1/2) around a one-frame
+  Shout-key tap and restoring them a couple frames later — so the spoken word fires through
+  the full native pipeline (movement, scripts, animations) but the charge wait is gone.
+- **Equipped shout/power is restored after a voice-cast** (MCM → Shout Casting, default ON).
+  The pipeline has to equip the spoken shout to fire it; the mod now puts back whatever you
+  had equipped afterwards, so voice casting doesn't change your loadout.
+
+## 1.3.5 — restart crash fixed, mic auto-recovery, silent movement shouts, MCM overhaul
+
 ## 1.3.5 — restart crash fixed, mic auto-recovery, silent movement shouts, MCM overhaul
 - **Fixed: "Restart recognizer" no longer freezes the game.** Restarting the recognizer
   (e.g. after the mic was busy at launch) could hard-lock the game while it tore down a

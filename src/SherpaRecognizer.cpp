@@ -269,7 +269,19 @@ namespace VSC
     void SherpaRecognizer::SetGrammar(const std::vector<std::string>& /*a_phrases*/)
     {
         // Sherpa is open-vocabulary — no grammar needed.
-        // Phrases stored here could wire hot-word boosting in a future update.
+        // Contextual biasing is wired separately via SetHotwords().
+    }
+
+    void SherpaRecognizer::SetHotwords(const std::string& a_phrases, float a_score, bool a_enabled)
+    {
+        {
+            std::lock_guard<std::mutex> lk(_hotwordsMutex);
+            _hotwordsText = a_phrases;
+        }
+        _hotwordsScore.store(a_score);
+        _hotwordsEnabled.store(a_enabled);
+        // Applied at the next InitEngine() (sherpa bakes hotwords into the recognizer at
+        // creation) — same as the endpoint rules. A live change takes effect on restart.
     }
 
     void SherpaRecognizer::Stop()
@@ -532,7 +544,13 @@ namespace VSC
         _cfg.model_config.tokens                 = _cfgStorage.tok.c_str();
         _cfg.model_config.provider               = "cpu";
         _cfg.model_config.num_threads            = 1;
-        _cfg.decoding_method                     = "greedy_search";
+        // modified_beam_search keeps several hypotheses per step instead of committing to
+        // the single best token (greedy), which is noticeably more accurate on multi-word
+        // phrases and proper nouns (spell names, dragon words) for a negligible CPU cost.
+        // max_active_paths is the beam width; 0 (from the memset) would be invalid, so set
+        // the sherpa default of 4 explicitly.
+        _cfg.decoding_method                     = "modified_beam_search";
+        _cfg.max_active_paths                    = 4;
         _cfg.enable_endpoint                     = 1;
         // Trailing-silence thresholds ("responsiveness"/"sensitivity") — lower = less
         // delay between finishing the phrase and the cast. rule2 fires after speech + a
@@ -550,8 +568,58 @@ namespace VSC
         logger::info("[sherpa] endpoint rules: hard={:.2f}s pause={:.2f}s maxUtt={:.1f}s",
                      epR1, epR2, epR3);
 
-        logger::info("[sherpa] creating recognizer (enc={} ...)", enc);
+        // Contextual biasing (hotwords): bias the decoder toward the live spell/shout roster.
+        // ONLY enabled when (a) the option is on AND (b) a bpe.vocab sits beside the model
+        // (sherpa needs it to tokenize the phrases). Otherwise we leave it off and recognition
+        // is unchanged. Requires modified_beam_search (set above).
+        bool hotwordsOn = false;
+        if (_hotwordsEnabled.load()) {
+            const std::string bpeVocabPath = mdir + "\\bpe.vocab";
+            std::error_code ec;
+            if (std::filesystem::exists(bpeVocabPath, ec)) {
+                std::string hw;
+                { std::lock_guard<std::mutex> lk(_hotwordsMutex); hw = _hotwordsText; }
+                if (!hw.empty()) {
+                    _cfgStorage.bpeVocab = bpeVocabPath;
+                    _cfgStorage.hotwords = std::move(hw);
+                    _cfg.model_config.modeling_unit = "bpe";
+                    _cfg.model_config.bpe_vocab     = _cfgStorage.bpeVocab.c_str();
+                    _cfg.hotwords_buf               = _cfgStorage.hotwords.c_str();
+                    _cfg.hotwords_buf_size          = static_cast<int32_t>(_cfgStorage.hotwords.size());
+                    _cfg.hotwords_score             = _hotwordsScore.load();
+                    hotwordsOn = true;
+                    logger::info("[sherpa] hotwords: ON ({} bytes, score {:.2f})",
+                                 _cfgStorage.hotwords.size(), _cfg.hotwords_score);
+                }
+            } else {
+                logger::warn("[sherpa] hotwords requested but bpe.vocab not found at {} — "
+                             "skipping (recognition unchanged)", bpeVocabPath);
+            }
+        }
+
+        logger::info("[sherpa] creating recognizer (decoding={}, hotwords={}, enc={} ...)",
+                     _cfg.decoding_method, hotwordsOn ? "on" : "off", enc);
         _rec = SafeCreateRecognizer(_sherpa.CreateOnlineRecognizer, &_cfg);
+        if (!_rec && hotwordsOn) {
+            // Hotwords (or a bad bpe.vocab) may have broken creation — retry WITHOUT them so
+            // we keep beam search rather than dropping all the way to greedy.
+            logger::warn("[sherpa] recognizer creation failed with hotwords — retrying without");
+            _cfg.model_config.modeling_unit = nullptr;
+            _cfg.model_config.bpe_vocab     = nullptr;
+            _cfg.hotwords_buf               = nullptr;
+            _cfg.hotwords_buf_size          = 0;
+            hotwordsOn = false;
+            _rec = SafeCreateRecognizer(_sherpa.CreateOnlineRecognizer, &_cfg);
+        }
+        if (!_rec) {
+            // Auto-fallback: if the model/runtime rejects modified_beam_search, drop to
+            // greedy_search (always supported) so recognition still comes up rather than
+            // dying. Beam search is only an accuracy win; greedy is the safe baseline.
+            logger::warn("[sherpa] recognizer creation failed with '{}' — falling back to "
+                         "greedy_search", _cfg.decoding_method);
+            _cfg.decoding_method = "greedy_search";
+            _rec = SafeCreateRecognizer(_sherpa.CreateOnlineRecognizer, &_cfg);
+        }
         if (!_rec) {
             logger::error("[sherpa] SherpaOnnxCreateOnlineRecognizer returned null "
                           "(model paths wrong or faulted?)");

@@ -60,6 +60,10 @@ namespace VSC
         // from MCM/INI and push them to the recognizer. They take effect at the next
         // recognizer (re)start (sherpa caches endpoint config at creation).
         void PushEndpointRules();
+        // Build the hotword (contextual-biasing) list from the live roster and push it to the
+        // recognizer. Takes effect on the next recognizer (re)start (sherpa bakes hotwords at
+        // creation), same as the endpoint rules. No-op cost when hotwords are disabled.
+        void PushHotwords();
         // Edge-triggered: surface a graceful in-game notice when the recognizer reports the
         // mic couldn't start (and a "connected" notice when it recovers). Called from the
         // ticker so it runs only while in-game.

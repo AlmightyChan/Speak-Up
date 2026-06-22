@@ -223,6 +223,26 @@ namespace VSC
             }
         }
 
+        // Conjuration spells are very often spoken — and transcribed — WITHOUT their leading
+        // verb: the model drops "conjure" and emits "storm atronach" for "Conjure Storm
+        // Atronach" (seen repeatedly in logs). Add the prefix-stripped form as a LOWEST-
+        // priority alias so the dropped-verb speech still matches, WITHOUT removing the full
+        // name (which still wins on a tie). We strip only "conjure "/"summon " — NOT "bound "
+        // ("Bound Sword" is deliberately spoken in full), and never the last token.
+        {
+            auto stripLeadingVerb = [&](const std::string& pre) -> bool {
+                if (base.size() > pre.size() && base.compare(0, pre.size(), pre) == 0) {
+                    std::string stripped = base.substr(pre.size());
+                    if (!stripped.empty() && stripped.find(' ') != std::string::npos) {
+                        out.push_back({ stripped, 2 });  // multi-word remainder only
+                        return true;
+                    }
+                }
+                return false;
+            };
+            stripLeadingVerb("conjure ") || stripLeadingVerb("summon ");
+        }
+
         return out;
     }
 }

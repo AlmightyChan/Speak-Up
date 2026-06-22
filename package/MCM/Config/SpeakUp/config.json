@@ -71,6 +71,20 @@
                     "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": true }
                 },
                 {
+                    "id": "bShoutRestoreEquipped:Voice",
+                    "text": "Restore equipped shout after casting",
+                    "type": "toggle",
+                    "help": "ON (default): voice-casting a shout puts back whatever shout/power you had equipped afterwards (the mod equips the spoken shout to fire it). OFF: the voice-cast shout stays equipped.",
+                    "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": true }
+                },
+                {
+                    "id": "bShoutInstantPipeline:Voice",
+                    "text": "Instant shouts (no charge-up)",
+                    "type": "toggle",
+                    "help": "ON (default): fires shouts at the word you spoke almost instantly instead of a 0.2-1.2s charge-up - movement shouts (Whirlwind Sprint) and all effects still fire. Briefly retimes the game's shout thresholds around a one-frame key tap. Turn OFF only if shouts fire the wrong word level on your setup (legacy timed-hold fallback).",
+                    "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": true }
+                },
+                {
                     "id": "bPlayShoutAnimation:Voice",
                     "text": "Play shout animation",
                     "type": "toggle",
@@ -87,8 +101,22 @@
                     "id": "fSherpaMatchThreshold:Voice",
                     "text": "Recognition confidence",
                     "type": "slider",
-                    "help": "How closely what you say must match a spell name to count. Lower = more forgiving but more wrong casts; higher = stricter, may ignore valid speech. Default 0.62. Applies immediately.",
+                    "help": "How closely what you say must match a spell name to count. Lower = more sensitive/forgiving but more wrong casts; higher = stricter, may ignore valid speech. Default 0.62. Applies immediately.",
                     "valueOptions": { "sourceType": "ModSettingFloat", "min": 0.40, "max": 0.90, "step": 0.01, "defaultValue": 0.62, "formatString": "{2}" }
+                },
+                {
+                    "id": "bUseHotwords:Voice",
+                    "text": "Bias toward your spell names (hotwords)",
+                    "type": "toggle",
+                    "help": "ON (default): nudges the recognizer toward your actual spell/shout names, which helps proper nouns and dragon words. Takes effect after 'Restart recognizer' (Developer page). If it starts hearing spells when you didn't say one, lower the strength below or turn this off.",
+                    "valueOptions": { "sourceType": "ModSettingBool", "defaultValue": true }
+                },
+                {
+                    "id": "fHotwordsScore:Voice",
+                    "text": "Biasing strength",
+                    "type": "slider",
+                    "help": "How hard to bias toward your spell names (only matters when biasing is ON). Higher = more likely to hear the right spell, but also more likely to 'hear' one in noise. Default 1.5. Applies after Restart recognizer.",
+                    "valueOptions": { "sourceType": "ModSettingFloat", "min": 0.0, "max": 4.0, "step": 0.1, "defaultValue": 1.5, "formatString": "{1}" }
                 },
                 { "text": "Responsiveness  (apply after Restart recognizer)", "type": "header" },
                 {

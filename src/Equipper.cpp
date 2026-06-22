@@ -412,6 +412,16 @@ namespace VSC
                 return false;
             }
 
+            // 0. Remember what shout/power was equipped so we can put it back after firing —
+            //    voice-casting a shout shouldn't permanently change the player's equipped one.
+            //    (selectedPower holds the equipped shout OR power.) Only restore if it differs
+            //    from what we're about to cast and the option is on.
+            RE::TESForm* restorePower = nullptr;
+            if (g_cast.shoutRestoreEquipped) {
+                RE::TESForm* prev = a_player->GetActorRuntimeData().selectedPower;
+                if (prev && prev != a_shout) restorePower = prev;
+            }
+
             // 1. Equip the shout so the engine knows which shout to fire on key press.
             eqm->EquipShout(a_player, a_shout);
 
@@ -450,41 +460,108 @@ namespace VSC
                 return true;  // handled — do NOT fall through to the instant path (no double cast)
             }
 
-            // 5. Inject key-DOWN now; release after a_holdMs. Skyrim derives the released
-            //    word level from how long Shout is HELD — an instantaneous down+up taps
-            //    out at word 1 (the long-standing "every shout only casts Fus" bug), so we
-            //    hold the synthetic key for the spoken word level's duration and let the
-            //    engine charge to that tier. KEYEVENTF_SCANCODE sends a hardware-style
-            //    event DirectInput/RawInput picks up like a physical key press.
+            // 5. INSTANT mode (opt-in): the engine picks the released word by comparing how
+            //    long Shout was HELD against fShoutTime1 (>= t1 -> word 2) and fShoutTime2
+            //    (>= t2 -> word 3) at release. Normally we win that comparison by HOLDING the
+            //    key a_holdMs (0.06–1.2s). Instead, briefly COLLAPSE those two thresholds for
+            //    the target level so a ~one-frame tap resolves to it — no long hold. This is
+            //    still the FULL native pipeline (equip + real key event), so movement/script
+            //    effects fire identically. fShoutTime1/2 are GLOBAL in-memory floats, so we
+            //    cache the originals and restore them a few frames after the release (once the
+            //    engine has consumed it) on the main thread — never to a hardcoded default
+            //    (Requiem et al. retune them; that's why ShoutKeyHoldMs reads them live).
+            constexpr int   kInstantTapMs       = 30;     // ~2 frames: enough hold to register
+            constexpr int   kGmstRestoreDelayMs = 130;    // let the engine consume the release first
+            constexpr float kThreshLo           = 0.0f;   // "any tap clears this word"
+            constexpr float kThreshHi           = 1.0e9f; // "no tap reaches this word"
+
+            RE::Setting* gs1 = nullptr;
+            RE::Setting* gs2 = nullptr;
+            float savedT1 = 0.0f, savedT2 = 0.0f;
+            bool  clamped = false;
+            if (g_cast.shoutInstantPipeline) {
+                if (auto* gst = RE::GameSettingCollection::GetSingleton()) {
+                    gs1 = gst->GetSetting("fShoutTime1");
+                    gs2 = gst->GetSetting("fShoutTime2");
+                    if (gs1 && gs2) {
+                        savedT1 = gs1->GetFloat();
+                        savedT2 = gs2->GetFloat();
+                        switch (a_level) {
+                        case 0:  gs1->data.f = kThreshHi;                            break;  // word 1
+                        case 1:  gs1->data.f = kThreshLo; gs2->data.f = kThreshHi;   break;  // word 2
+                        default: gs1->data.f = kThreshLo; gs2->data.f = kThreshLo;   break;  // word 3
+                        }
+                        clamped = true;
+                    }
+                }
+            }
+            const int holdMs = clamped ? kInstantTapMs : (a_holdMs < 0 ? 0 : a_holdMs);
+
+            // 6. Inject key-DOWN now; release after holdMs. KEYEVENTF_SCANCODE sends a
+            //    hardware-style event DirectInput/RawInput picks up like a physical key.
             INPUT down{};
             down.type       = INPUT_KEYBOARD;
             down.ki.wScan   = static_cast<WORD>(shoutScan);
             down.ki.dwFlags = KEYEVENTF_SCANCODE;
             UINT sent = ::SendInput(1, &down, sizeof(INPUT));
             if (sent != 1) {
+                if (clamped) { gs1->data.f = savedT1; gs2->data.f = savedT2; }  // undo the clamp
                 g_injectingShoutKey.store(false);
                 logger::warn("[cast] shout '{}' SendInput(down) returned {} (expected 1) — "
                              "falling back to instant path", a_name, sent);
                 return false;  // caller falls through to instant path
             }
 
-            // Release the key after the hold on a detached thread: SendInput is thread-safe
+            // Release the key after the hold on a detached thread (SendInput is thread-safe
             // and touches no game objects, so this is safe off the main thread, and async
-            // means we never block the main thread for up to ~1.6s while the shout charges.
-            const int holdMs = a_holdMs < 0 ? 0 : a_holdMs;
-            std::thread([shoutScan, holdMs]() {
+            // means we never block the main thread while the shout charges). After the shout
+            // FIRES we do a single MAIN-THREAD restore: put back the clamped GMSTs (instant
+            // mode) AND re-equip the player's previous shout/power, then release the guard.
+            // Holding the guard until the restore prevents an overlapping shout from caching
+            // the clamped thresholds — or the just-equipped shout — as its "original".
+            RE::PlayerCharacter* player = a_player;
+            std::thread([shoutScan, holdMs, clamped, savedT1, savedT2, restorePower, player]() {
                 std::this_thread::sleep_for(std::chrono::milliseconds(holdMs));
                 INPUT up{};
                 up.type       = INPUT_KEYBOARD;
                 up.ki.wScan   = static_cast<WORD>(shoutScan);
                 up.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
                 ::SendInput(1, &up, sizeof(INPUT));
-                g_injectingShoutKey.store(false);  // clear the guard once Shout is released
+
+                if (clamped || restorePower) {
+                    // Let the engine consume the release (read the GMSTs + fire the shout),
+                    // then restore state on the main thread.
+                    std::this_thread::sleep_for(std::chrono::milliseconds(kGmstRestoreDelayMs));
+                    if (auto* task = SKSE::GetTaskInterface()) {
+                        task->AddTask([clamped, savedT1, savedT2, restorePower, player]() {
+                            if (clamped) {
+                                if (auto* gst = RE::GameSettingCollection::GetSingleton()) {
+                                    if (auto* s1 = gst->GetSetting("fShoutTime1")) s1->data.f = savedT1;
+                                    if (auto* s2 = gst->GetSetting("fShoutTime2")) s2->data.f = savedT2;
+                                }
+                            }
+                            if (restorePower) {
+                                if (auto* eqm2 = RE::ActorEquipManager::GetSingleton()) {
+                                    if (auto* sh = restorePower->As<RE::TESShout>()) {
+                                        eqm2->EquipShout(player, sh);
+                                    } else if (auto* sp = restorePower->As<RE::SpellItem>()) {
+                                        eqm2->EquipSpell(player, sp);
+                                    }
+                                }
+                            }
+                            g_injectingShoutKey.store(false);  // release AFTER state is restored
+                        });
+                        return;  // guard released inside the task
+                    }
+                }
+                g_injectingShoutKey.store(false);  // nothing to restore (or no task interface)
             }).detach();
 
             logger::info("[cast] shout '{}' (word level {}, spell {:08X}, shoutKeyDX=0x{:X}, "
-                         "hold {}ms) [real-pipeline — equip+SendInput, held to charge word level]",
-                a_name, a_level + 1, a_spell->GetFormID(), shoutScan, holdMs);
+                         "{} {}ms) [real-pipeline — equip+SendInput{}]",
+                a_name, a_level + 1, a_spell->GetFormID(), shoutScan,
+                clamped ? "instant-tap" : "held", holdMs,
+                clamped ? ", GMST word-clamp" : ", held to charge word level");
             return true;
         }
 

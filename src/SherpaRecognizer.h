@@ -77,6 +77,12 @@ namespace VSC
             _endpointRule3.store(a_r3);
         }
 
+        // Hotword (contextual-biasing) list: newline-separated phrases the recognizer should
+        // lean toward (the live spell/shout roster). a_score is the per-token boost. Applied
+        // at the next InitEngine(), and ONLY if a bpe.vocab sits beside the model (needed to
+        // tokenize the phrases) — otherwise hotwords are skipped and recognition is unchanged.
+        void SetHotwords(const std::string& a_phrases, float a_score, bool a_enabled);
+
         // Force-finalize (no-op here — sherpa's built-in endpoint handles this).
         void Finalize() {}
 
@@ -147,6 +153,8 @@ namespace VSC
         // String members hold backing storage for the C string pointers in the config.
         struct CfgStorage {
             std::string enc, dec, joi, tok;
+            std::string bpeVocab;   // path to bpe.vocab (for hotword tokenization)
+            std::string hotwords;   // newline-joined hotword phrases (backing for hotwords_buf)
         };
         CfgStorage                        _cfgStorage;
         SherpaOnnxOnlineRecognizerConfig  _cfg{};
@@ -164,6 +172,13 @@ namespace VSC
         std::atomic<float>   _endpointRule1{ 0.7f };   // hard silence cutoff
         std::atomic<float>   _endpointRule2{ 0.45f };  // end-of-phrase pause (primary)
         std::atomic<float>   _endpointRule3{ 20.0f };  // max utterance length
+        // Hotword (contextual-biasing) state. _hotwordsText is the newline-joined roster;
+        // guarded by _hotwordsMutex (set on the main thread, read by InitEngine on the
+        // worker). Applied at InitEngine only if enabled AND bpe.vocab is present.
+        std::mutex           _hotwordsMutex;
+        std::string          _hotwordsText;
+        std::atomic<float>   _hotwordsScore{ 1.5f };
+        std::atomic<bool>    _hotwordsEnabled{ false };
         // Replaces std::once_flag: a plain mutex+bool that is re-armable so Restart()
         // can issue a second Stop() after resetting the flag.
         std::mutex           _stopMutex;

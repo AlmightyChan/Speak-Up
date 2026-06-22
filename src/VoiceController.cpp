@@ -511,6 +511,13 @@ namespace VSC
         // the voice; shouts fire their effect with no character Thu'um vocalization. 1 = the
         // character vocalizes the Thu'um (full engine pipeline for every shout).
         cs.shoutPlayVoice = ReadCfgBool("bShoutPlayVoice", "ShoutPlayVoice", false);
+        // ShoutInstantPipeline (default ON since 2.0): fire pipeline shouts at the spoken
+        // word level with a ~one-frame key tap (GMST word-clamp) instead of the 0.2–1.2s
+        // charge hold. Still the full pipeline, so movement/script effects fire.
+        cs.shoutInstantPipeline = ReadCfgBool("bShoutInstantPipeline", "ShoutInstantPipeline", true);
+        // ShoutRestoreEquipped (default ON): after a pipeline shout (which equips the spoken
+        // shout to fire it), re-equip whatever shout/power the player had before.
+        cs.shoutRestoreEquipped = ReadCfgBool("bShoutRestoreEquipped", "ShoutRestoreEquipped", true);
         // ShoutKeyDX: DirectInput scan code for the Shout key, used when ControlMap returns
         // unmapped. Default 0x39 = Space (vanilla default shout/sheathe binding).
         {
@@ -630,11 +637,44 @@ namespace VSC
         }
     }
 
+    void VoiceController::PushHotwords()
+    {
+        // Hotword (contextual-biasing) list. Default OFF — the user opts in via MCM. We bias
+        // toward the command NAMES + dragon words, NOT the verb/hand prefixes (boosting
+        // "cast"/"equip"/"left" would make the model hallucinate them). The model's BPE is
+        // UPPERCASE, so the hotwords must be uppercased to tokenize. Capped so a huge spell
+        // list can't bloat recognizer init.
+        const bool  enabled = ReadCfgBool("bUseHotwords", "UseHotwords", true);
+        const float score   = std::strtof(ReadCfg("fHotwordsScore", "HotwordsScore", "1.5").c_str(), nullptr);
+        std::string text;
+        if (enabled) {
+            std::vector<std::string> cands;
+            { std::lock_guard<std::mutex> lock(_mapMutex); cands = _fuzzyCandidates; }
+            static constexpr std::size_t kMaxHotwords = 400;
+            static const char* const kSkip[] = { "cast ", "equip ", "dual ", "shout ", "left ", "right " };
+            std::size_t n = 0;
+            for (const auto& c : cands) {
+                if (n >= kMaxHotwords) break;
+                bool skip = (c.size() < 3);
+                for (const char* p : kSkip) { if (!skip && c.rfind(p, 0) == 0) skip = true; }
+                if (skip) continue;
+                std::string up = c;
+                for (char& ch : up) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+                text += up;
+                text += '\n';
+                ++n;
+            }
+            logger::info("[voice] hotwords: {} phrases, score {:.2f}", n, score);
+        }
+        SherpaRecognizer::Get().SetHotwords(text, score, enabled && !text.empty());
+    }
+
     void VoiceController::RestartRecognizer()
     {
         // Must run on the main thread (called from LoadConfig via AddTask / menu-close).
         logger::info("[voice] RestartRecognizer: restarting recognizer");
         Notify("Speak Up: restarting recognizer...");
+        PushHotwords();  // refresh the biasing list so the restart applies the current roster
         SherpaRecognizer::Get().Restart();
     }
 
@@ -1010,9 +1050,11 @@ namespace VSC
         }
         _lastPhrasesSorted = std::move(sorted);
 
-        // The recognizer is open-vocabulary — no grammar push needed. SetGrammar is a
-        // no-op but call it so the phrase list is available for future hotword wiring.
+        // The recognizer is open-vocabulary — no grammar push needed. SetGrammar is a no-op.
         SherpaRecognizer::Get().SetGrammar(grammar.phrases);
+        // Refresh the hotword (contextual-biasing) list from the new roster. Stored now;
+        // applied at the next recognizer restart (sherpa bakes hotwords at creation).
+        PushHotwords();
         logger::info("[voice] grammar queued: {} phrases from {} entries ({} name conflicts resolved)",
             grammar.phrases.size(), specs.size(), grammar.collisions);
         if (!grammar.conflicts.empty()) {

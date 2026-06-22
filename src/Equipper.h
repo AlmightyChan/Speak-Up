@@ -35,6 +35,15 @@ namespace VSC
                                                    // engine pipeline (movement/script/etc.) still run it.
         std::uint32_t shoutKeyDX = 0x39;           // DX scan code for the Shout/Sheathe key (default 0x39 = Space).
                                                    // Read from ControlMap at cast time; this is the INI fallback.
+        bool          shoutRestoreEquipped = true; // 1 (default): a voice-cast shout that runs the pipeline restores
+                                                   // whatever shout/power you had equipped afterwards (the pipeline
+                                                   // equips the spoken shout to fire it; this puts your original back).
+        bool          shoutInstantPipeline = true; // 1 (default): instead of HOLDING the Shout key 0.2–1.2s to charge
+                                                   // the word level, briefly collapse the engine's word-level
+                                                   // thresholds (fShoutTime1/2) around a ~one-frame key tap so the
+                                                   // chosen word fires almost instantly — still via the full native
+                                                   // pipeline, so movement/script effects fire. 0 = the legacy timed
+                                                   // hold (safe fallback if a setup mis-resolves the word level).
         // (The per-word-level key HOLD durations are derived live from the engine's
         // fShoutTime1/fShoutTime2 game settings at cast time — see Equipper.cpp.)
     };

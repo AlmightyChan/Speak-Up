@@ -10,11 +10,18 @@
 //   VSC::FuzzyResult VSC::BestFuzzyMatch(transcript, candidates)
 //
 // Algorithm:
-//   score = 0.50 * levenshtein_sim + 0.35 * phonetic_sim + 0.15 * anchor_bonus
+//   score = 0.25*lev_raw + 0.15*phon_raw + 0.25*lev_folded + 0.20*phon_folded
+//         + 0.15*anchor_bonus
 //
 // Phonetic similarity: per-word Double Metaphone (primary code) then Jaccard on
 // the code multisets of the two strings.  Handles "natronac"~"atronach",
 // "fire bolt"~"firebolt", "spent"~"sprint", etc.
+//
+// The *_folded channels run the same two similarities on confusable-consonant-
+// folded copies of the strings (see FoldConfusables) so the open-vocab ASR's
+// labial swaps — "Fus" heard as 'boos'/'pusra', "Wuld" as 'bold' — don't sink an
+// otherwise-correct word. Kept as SEPARATE weighted channels (not a replacement)
+// so the raw signal still dominates true matches.
 //
 // Self-contained, dependency-free, header-only.
 // ============================================================================
@@ -75,6 +82,46 @@ namespace VSC
                 }
             }
             if (!out.empty() && out.back() == ' ') out.pop_back();
+            return out;
+        }
+
+        // -----------------------------------------------------------------------
+        // FoldConfusables — collapse acoustically-confusable consonants to one
+        // canonical letter so the matcher tolerates the open-vocab ASR's most
+        // common substitutions. The streaming English model frequently mis-hears
+        // the LABIAL family across each other on these short, breathy command
+        // words (logs: "Fus" -> 'boos'/'pusra', "Wuld" -> 'bold'). Double Metaphone
+        // already merges b/p and f/v, but NOT across the {b,p}|{f,v}|{w} boundary,
+        // and Levenshtein is prefix-sensitive, so a swapped first consonant craters
+        // both channels. Folding {b,p,f,v,w} -> 'b' lets 'boos'~'foos' and
+        // 'bold'~'woold' read as near-identical. Conservative on purpose: only the
+        // family the data shows the ASR actually confuses ('m' stays distinct — its
+        // nasal quality isn't confused with the stops/fricatives).
+        // -----------------------------------------------------------------------
+        inline std::string FoldConfusables(const std::string& s)
+        {
+            std::string out;
+            out.reserve(s.size());
+            for (char c : s) {
+                switch (c) {
+                    case 'b': case 'p': case 'f': case 'v': case 'w': out += 'b'; break;
+                    default:  out += c; break;
+                }
+            }
+            return out;
+        }
+
+        // -----------------------------------------------------------------------
+        // Despace — drop ALL spaces. The folded channels run on despaced copies so a
+        // run-together transcription matches a multi-word phrase: said quickly, the ASR
+        // emits "Fus Ro Dah" as one token "pusrodah", which scores poorly word-by-word
+        // against the spaced "fus ro dah" — but despace+fold makes both "busrodah".
+        // -----------------------------------------------------------------------
+        inline std::string Despace(const std::string& s)
+        {
+            std::string out;
+            out.reserve(s.size());
+            for (char c : s) if (c != ' ') out += c;
             return out;
         }
 
@@ -615,15 +662,30 @@ namespace VSC
         // -----------------------------------------------------------------------
         inline double Score(const std::string& transcript, const std::string& candidate)
         {
-            constexpr double kLev      = 0.50;
-            constexpr double kPhonetic = 0.35;
+            // Raw channels — the dominant signal for genuine matches.
+            const double levRaw  = LevenshteinSim(transcript, candidate);
+            const double phonRaw = PhoneticSim(transcript, candidate);
+            const double anch    = AnchorBonus(transcript, candidate);
+
+            // Confusable-folded channels — rescue the ASR's labial-consonant swaps
+            // (f/v/b/p/w) AND run-together multi-word transcriptions. Run on the
+            // DESPACED folded copies so "pusrodah" ~ "fus ro dah". Separate weighted
+            // terms so a folded near-collision can't outrank a true match that already
+            // scores high on the raw (space-aware) channels.
+            const std::string ft = Despace(FoldConfusables(transcript));
+            const std::string fc = Despace(FoldConfusables(candidate));
+            const double levFold  = LevenshteinSim(ft, fc);
+            const double phonFold = PhoneticSim(ft, fc);
+
+            constexpr double kLevRaw   = 0.25;
+            constexpr double kPhonRaw  = 0.15;
+            constexpr double kLevFold  = 0.25;
+            constexpr double kPhonFold = 0.20;
             constexpr double kAnchor   = 0.15;
 
-            const double lev  = LevenshteinSim(transcript, candidate);
-            const double phon = PhoneticSim(transcript, candidate);
-            const double anch = AnchorBonus(transcript, candidate);
-
-            return kLev * lev + kPhonetic * phon + kAnchor * anch;
+            return kLevRaw  * levRaw  + kPhonRaw  * phonRaw +
+                   kLevFold * levFold + kPhonFold * phonFold +
+                   kAnchor  * anch;
         }
 
     }  // namespace detail
